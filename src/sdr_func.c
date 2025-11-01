@@ -758,6 +758,49 @@ void sdr_corr_std(const sdr_cpx16_t *IQ, const sdr_cpx16_t *code, int N,
         }
     }
 }
+void sdr_corr_std_ring(const sdr_cpx16_t *IQ, const sdr_cpx16_t *code, int N,
+    const double *pos, int n, sdr_cpx_t *corr)
+{
+    int flip = 0;
+    for (int i = 0; i < n; i++) {
+        int j = (int)floor(pos[i]), k = (int)((pos[i] - j) * SDR_N_CODES);
+        int s = j % N;
+        if (s < 0) s += N;
+        int M = N - s;
+        sdr_cpx_t cf[2] = {{0}};
+        dot_IQ_code(IQ, code + k * N + s, M, 1.0f / N, &cf[0]);
+        if (s > 0) dot_IQ_code(IQ + M, code + k * N, s, 1.0f / N, &cf[1]);
+
+        if (i == 0) {
+            float I = cf[0][0] + cf[1][0];
+            float Q = cf[0][1] + cf[1][1];
+            float norm = I * I + Q * Q;
+            float I_fl = cf[0][0] - cf[1][0];
+            float Q_fl = cf[0][1] - cf[1][1];
+            float norm_fl = I_fl * I_fl + Q_fl * Q_fl;
+
+            if (norm < norm_fl) {
+                flip = 1;
+                corr[0][0] = I_fl;
+                corr[0][1] = Q_fl;
+                continue;
+            }
+            else {
+                corr[0][0] = I;
+                corr[0][1] = Q;
+                continue;
+            }
+        }
+        if (flip){
+            corr[i][0] = cf[0][0] - cf[1][0];
+            corr[i][1] = cf[0][1] - cf[1][1];
+        }
+        else{
+            corr[i][0] = cf[0][0] + cf[1][0];
+            corr[i][1] = cf[0][1] + cf[1][1];
+        }
+    }
+}
 
 // mix carrier and standard correlator for complex buffer (for python) ---------
 void sdr_corr_std_cpx(const sdr_cpx_t *buff, int len_buff, int ix, int N,

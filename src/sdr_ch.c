@@ -563,6 +563,61 @@ static void track_sig(sdr_ch_t *ch, double time, const sdr_buff_t *buff, int ix)
     }
 }
 
+// track signal for L1C/A ------------------------------------------------------
+static void track_sig_L1CA(sdr_ch_t *ch, double time, const sdr_buff_t *buff, int ix)
+{
+    double tau = time - ch->time;
+    double fc = ch->fi + ch-> fd;
+    ch->adr += ch->fd * tau;
+    ch->coff -= ch->fd / ch->fc * tau;
+    ch->time = time;
+
+    adj_coff(ch);
+
+    double phi = ch->fi * tau + ch->adr;
+
+    sdr_mix_carr(buff, ix, ch->N, ch->fs, fc, phi, ch->data);
+    
+    double pos[SDR_MAX_CORR];
+    double coff_fs = ch->coff * ch->fs;
+    for (int j = 0; j < ch->trk->npos + ch->trk->nposx; j++){
+        pos[j] = ch->trk->pos[j] + coff_fs;
+    }
+    sdr_corr_std_ring(ch->data, ch->trk->code, ch->N, pos,
+        ch->trk->npos + ch->trk->nposx, ch->trk->C);
+    // add P correlator outputs to history 
+    sdr_add_buff(ch->trk->P, SDR_N_HIST, ch->trk->C[0], sizeof(sdr_cpx_t));
+    update_tow(ch, ch->T);
+    ch->lock++;
+
+    // FLL/PLL, DLL and update C/N0 
+    if (ch->lock * ch->T <= T_FPULLIN) {
+        FLL(ch);
+    }
+    else {
+        PLL(ch);
+    }
+    DLL(ch);
+    CN0(ch);
+
+    // decode navigation data 
+    if (ch->lock * ch->T >= T_NPULLIN) {
+        sdr_nav_decode(ch);
+    }
+    // test signal lost 
+    double t_cn0 = sdr_thres_cn0_u;
+    if (ch->cn0 < t_cn0) {
+        ch->state = SDR_STATE_IDLE;
+        ch->lock = 0;
+        ch->trk->sec_sync = ch->trk->sec_pol = 0;
+        ch->nav->ssync = ch->nav->fsync = ch->nav->rev = 0;
+        ch->lost++;
+        sdr_sat_id(ch->sig, ch->prn, ch->sat); // for glonass fdma
+        sdr_log(3, "$LOG,%.3f,%s,%d,SIGNAL LOST (%.1f)", ch->time, ch->sig,
+            ch->prn, ch->cn0);
+    }
+}
+
 //------------------------------------------------------------------------------
 //  Update a receiver channel. A receiver channel is a state machine which has
 //  the following internal states indicated as ch.state. By calling the function,
@@ -594,7 +649,12 @@ void sdr_ch_update(sdr_ch_t *ch, double time, const sdr_buff_t *buff, int ix)
     }
     else if (ch->state == SDR_STATE_LOCK) {
         pthread_mutex_lock(&ch->mtx);
-        track_sig(ch, time, buff, ix);
+        if (!strcmp(ch->sig, "L1CA")) {
+            track_sig_L1CA(ch, time, buff, ix);
+        }
+        else {
+            track_sig(ch, time, buff, ix);
+        }
         pthread_mutex_unlock(&ch->mtx);
     }
 }
