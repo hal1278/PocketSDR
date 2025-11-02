@@ -771,7 +771,7 @@ void sdr_corr_std_flip(const sdr_cpx16_t *IQ, const sdr_cpx16_t *code, int N,
         dot_IQ_code(IQ, code + k * N + s, M, 1.0f, &cf[0]);
         if (s > 0) dot_IQ_code(IQ + M, code + k * N, s, 1.0f, &cf[1]);
 
-        if (fliptest && i == 0) {
+        if (fliptest && i == 0 && s > 0) {
             float I = cf[0][0] / M + cf[1][0] / s;
             float Q = cf[0][1] / M + cf[1][1] / s;
             float norm = (I * I + Q * Q);
@@ -792,12 +792,12 @@ void sdr_corr_std_flip(const sdr_cpx16_t *IQ, const sdr_cpx16_t *code, int N,
             }
         }
         if (flip){
-            corr[0][0] = (cf[0][0] - cf[1][0]) / N;
-            corr[0][1] = (cf[0][1] - cf[1][1]) / N;
+            corr[i][0] = (cf[0][0] - cf[1][0]) / N;
+            corr[i][1] = (cf[0][1] - cf[1][1]) / N;
         }
         else{
-            corr[0][0] = (cf[0][0] + cf[1][0]) / N;
-            corr[0][1] = (cf[0][1] + cf[1][1]) / N;
+            corr[i][0] = (cf[0][0] + cf[1][0]) / N;
+            corr[i][1] = (cf[0][1] + cf[1][1]) / N;
         }
     }
 }
