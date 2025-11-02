@@ -758,8 +758,8 @@ void sdr_corr_std(const sdr_cpx16_t *IQ, const sdr_cpx16_t *code, int N,
         }
     }
 }
-void sdr_corr_std_ring(const sdr_cpx16_t *IQ, const sdr_cpx16_t *code, int N,
-    const double *pos, int n, sdr_cpx_t *corr)
+void sdr_corr_std_flip(const sdr_cpx16_t *IQ, const sdr_cpx16_t *code, int N,
+    const double *pos, int n, int fliptest, sdr_cpx_t *corr)
 {
     int flip = 0;
     for (int i = 0; i < n; i++) {
@@ -768,36 +768,36 @@ void sdr_corr_std_ring(const sdr_cpx16_t *IQ, const sdr_cpx16_t *code, int N,
         if (s < 0) s += N;
         int M = N - s;
         sdr_cpx_t cf[2] = {{0}};
-        dot_IQ_code(IQ, code + k * N + s, M, 1.0f / N, &cf[0]);
-        if (s > 0) dot_IQ_code(IQ + M, code + k * N, s, 1.0f / N, &cf[1]);
+        dot_IQ_code(IQ, code + k * N + s, M, 1.0f, &cf[0]);
+        if (s > 0) dot_IQ_code(IQ + M, code + k * N, s, 1.0f, &cf[1]);
 
-        if (i == 0) {
-            float I = cf[0][0] + cf[1][0];
-            float Q = cf[0][1] + cf[1][1];
-            float norm = I * I + Q * Q;
-            float I_fl = cf[0][0] - cf[1][0];
-            float Q_fl = cf[0][1] - cf[1][1];
+        if (fliptest && i == 0) {
+            float I = cf[0][0] / M + cf[1][0] / s;
+            float Q = cf[0][1] / M + cf[1][1] / s;
+            float norm = (I * I + Q * Q);
+            float I_fl = cf[0][0] / M - cf[1][0] / s;
+            float Q_fl = cf[0][1] / M  - cf[1][1] / s;
             float norm_fl = I_fl * I_fl + Q_fl * Q_fl;
 
             if (norm < norm_fl) {
                 flip = 1;
-                corr[0][0] = I_fl;
-                corr[0][1] = Q_fl;
+                corr[0][0] = (cf[0][0] - cf[1][0]) / N;
+                corr[0][1] = (cf[0][1] - cf[1][1]) / N;
                 continue;
             }
             else {
-                corr[0][0] = I;
-                corr[0][1] = Q;
+                corr[0][0] = (cf[0][0] + cf[1][0]) / N;
+                corr[0][1] = (cf[0][1] + cf[1][1]) / N;
                 continue;
             }
         }
         if (flip){
-            corr[i][0] = cf[0][0] - cf[1][0];
-            corr[i][1] = cf[0][1] - cf[1][1];
+            corr[0][0] = (cf[0][0] - cf[1][0]) / N;
+            corr[0][1] = (cf[0][1] - cf[1][1]) / N;
         }
         else{
-            corr[i][0] = cf[0][0] + cf[1][0];
-            corr[i][1] = cf[0][1] + cf[1][1];
+            corr[0][0] = (cf[0][0] + cf[1][0]) / N;
+            corr[0][1] = (cf[0][1] + cf[1][1]) / N;
         }
     }
 }

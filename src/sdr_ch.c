@@ -583,8 +583,9 @@ static void track_sig_L1CA(sdr_ch_t *ch, double time, const sdr_buff_t *buff, in
     for (int j = 0; j < ch->trk->npos + ch->trk->nposx; j++){
         pos[j] = ch->trk->pos[j] + coff_fs;
     }
-    sdr_corr_std_ring(ch->data, ch->trk->code, ch->N, pos,
-        ch->trk->npos + ch->trk->nposx, ch->trk->C);
+
+    sdr_corr_std_flip(ch->data, ch->trk->code, ch->N, pos,
+        ch->trk->npos + ch->trk->nposx, 1, ch->trk->C);
     // add P correlator outputs to history 
     sdr_add_buff(ch->trk->P, SDR_N_HIST, ch->trk->C[0], sizeof(sdr_cpx_t));
     update_tow(ch, ch->T);

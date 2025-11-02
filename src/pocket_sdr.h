@@ -311,8 +311,8 @@ double sdr_shift_freq(const char *sig, int fcn, double fi);
 float *sdr_dop_bins(double T, float dop, float max_dop, int *len_fds);
 void sdr_corr_std(const sdr_cpx16_t *IQ, const sdr_cpx16_t *code, int N,
     const double *pos, int n, sdr_cpx_t *corr);
-void sdr_corr_std_ring(const sdr_cpx16_t *IQ, const sdr_cpx16_t *code, int N,
-    const double *pos, int n, sdr_cpx_t *corr);
+void sdr_corr_std_flip(const sdr_cpx16_t *IQ, const sdr_cpx16_t *code, int N,
+    const double *pos, int n, int fliptest, sdr_cpx_t *corr);
 void sdr_corr_std_cpx(const sdr_cpx_t *buff, int len_buff, int ix, int N,
     double fs, double fc, double phi, const float *code, const double *pos,
     int n, sdr_cpx_t *corr);
