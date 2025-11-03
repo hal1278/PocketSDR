@@ -781,13 +781,13 @@ void sdr_corr_std_flip(const sdr_cpx16_t *IQ, const sdr_cpx16_t *code, int N,
 
             if (norm < norm_fl) {
                 flip = 1;
-                corr[0][0] = (cf[0][0] - cf[1][0]) / N;
-                corr[0][1] = (cf[0][1] - cf[1][1]) / N;
+                corr[i][0] = (cf[0][0] - cf[1][0]) / N;
+                corr[i][1] = (cf[0][1] - cf[1][1]) / N;
                 continue;
             }
             else {
-                corr[0][0] = (cf[0][0] + cf[1][0]) / N;
-                corr[0][1] = (cf[0][1] + cf[1][1]) / N;
+                corr[i][0] = (cf[0][0] + cf[1][0]) / N;
+                corr[i][1] = (cf[0][1] + cf[1][1]) / N;
                 continue;
             }
         }
