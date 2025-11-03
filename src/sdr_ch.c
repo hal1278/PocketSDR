@@ -574,12 +574,12 @@ static void track_sig_L1CA(sdr_ch_t *ch, double time, const sdr_buff_t *buff, in
 
     adj_coff(ch);
 
-    double phi = ch->fi * tau + ch->adr;
+    double coff_fs = ch->coff * ch->fs;
+    double phi = ch->fi * tau + ch->adr + fc * floor(coff_fs) / ch->fs;
 
     sdr_mix_carr(buff, ix, ch->N, ch->fs, fc, phi, ch->data);
     
     double pos[SDR_MAX_CORR];
-    double coff_fs = ch->coff * ch->fs;
     for (int j = 0; j < ch->trk->npos + ch->trk->nposx; j++){
         pos[j] = ch->trk->pos[j] + coff_fs;
     }
