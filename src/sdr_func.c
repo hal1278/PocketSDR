@@ -774,10 +774,10 @@ void sdr_corr_std_flip(const sdr_cpx16_t *IQ, const sdr_cpx16_t *code, int N,
         if (fliptest && 0 < s) {
             float I = cf[0][0] / M + cf[1][0] / s;
             float Q = cf[0][1] / M + cf[1][1] / s;
-            float norm = (I * I + Q * Q);
+            float norm = SQR(I) + SQR(Q);
             float I_fl = cf[0][0] / M - cf[1][0] / s;
             float Q_fl = cf[0][1] / M  - cf[1][1] / s;
-            float norm_fl = I_fl * I_fl + Q_fl * Q_fl;
+            float norm_fl = SQR(I_fl) + SQR(Q_fl);
 
             if (norm < norm_fl) {
                 flip = 1;
