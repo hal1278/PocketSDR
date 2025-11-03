@@ -31,14 +31,14 @@ all :
 	./configure $(CONF_OPT); \
 	sed 's/-lc//' < makefile > makefile.p; \
 	mv makefile.p makefile; \
-	make; \
+	$(MAKE); \
 	cd $$DIR; \
     cp $(SRC)/libfec.a $(SRC)/libfec.$(EXT) .
 
 clean:
 	DIR=`pwd`; \
 	cd $(SRC); \
-	make clean; \
+	$(MAKE) clean; \
 	cd $$DIR; \
 	rm -f $(TARGET)
 

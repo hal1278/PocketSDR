@@ -12,18 +12,18 @@
 #! $ sudo apt install libfftw3-dev   (Ubuntu)
 
 all:
-	make -f librtk.mk
-	make -f libldpc.mk
-	make -f libfec.mk
-	make -f libsdr.mk
+	$(MAKE) -f librtk.mk
+	$(MAKE) -f libldpc.mk
+	$(MAKE) -f libfec.mk
+	$(MAKE) -f libsdr.mk
 clean:
-	make -f librtk.mk clean
-	make -f libldpc.mk clean
-	make -f libfec.mk clean
-	make -f libsdr.mk clean
+	$(MAKE) -f librtk.mk clean
+	$(MAKE) -f libldpc.mk clean
+	$(MAKE) -f libfec.mk clean
+	$(MAKE) -f libsdr.mk clean
 install:
-	make -f librtk.mk install
-	make -f libldpc.mk install
-	make -f libfec.mk install
-	make -f libsdr.mk install
+	$(MAKE) -f librtk.mk install
+	$(MAKE) -f libldpc.mk install
+	$(MAKE) -f libfec.mk install
+	$(MAKE) -f libsdr.mk install
 
