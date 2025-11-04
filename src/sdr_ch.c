@@ -372,7 +372,7 @@ static void DLL(sdr_ch_t *ch)
         double E = sqrt(ch->trk->sumC[1]);
         double L = sqrt(ch->trk->sumC[2]);
         if (E + L > 0.0) {
-            double err_code = (E - L) / (E + L) * 0.5f * ch->T / ch->len_code;
+            double err_code = (E - L) / (E + L) * (sdr_sp_corr / 2) * ch->T / ch->len_code;
             ch->coff -= sdr_b_dll / 0.25 * err_code * ch->T * N;
             ch->trk->err_code = err_code;
         }
@@ -574,18 +574,21 @@ static void track_sig_L1CA(sdr_ch_t *ch, double time, const sdr_buff_t *buff, in
 
     adj_coff(ch);
 
-    double coff_fs = ch->coff * ch->fs;
-    double phi = ch->fi * tau + ch->adr + fc * floor(coff_fs) / ch->fs;
+    double phi = ch->fi * tau + ch->adr;
 
     sdr_mix_carr(buff, ix, ch->N, ch->fs, fc, phi, ch->data);
     
-    double pos[SDR_MAX_CORR];
-    for (int j = 0; j < ch->trk->npos + ch->trk->nposx; j++){
-        pos[j] = ch->trk->pos[j] + coff_fs;
-    }
+    // correlate
+    // double pos[SDR_MAX_CORR];
+    // for (int j = 0; j < ch->trk->npos + ch->trk->nposx; j++){
+    //     pos[j] = ch->trk->pos[j] + coff_fs;
+    // }
+    // sdr_corr_std_flip(ch->data, ch->trk->code, ch->N, pos,
+    //     ch->trk->npos + ch->trk->nposx, 0, ch->trk->C);
 
-    sdr_corr_std_flip(ch->data, ch->trk->code, ch->N, pos,
-        ch->trk->npos + ch->trk->nposx, 1, ch->trk->C);
+    sdr_corr_std_ring(ch->data, ch->trk->code, ch->N, ch->coff * ch->fs, 
+        ch->trk->pos, ch->trk->npos + ch->trk->nposx, 0, ch->trk->C);
+
     // add P correlator outputs to history 
     sdr_add_buff(ch->trk->P, SDR_N_HIST, ch->trk->C[0], sizeof(sdr_cpx_t));
     update_tow(ch, ch->T);
