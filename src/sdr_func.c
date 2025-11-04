@@ -814,11 +814,10 @@ void sdr_corr_std_flip(const sdr_cpx16_t *IQ, const sdr_cpx16_t *code, int N,
  * @param corr
  */
 void sdr_corr_std_ring(const sdr_cpx16_t *IQ, const sdr_cpx16_t *code, int N,
-    double posoff, const double *pos, int n, int fliptest, sdr_cpx_t *corr)
+    const double *pos, int n, sdr_cpx_t *corr)
 {
     for (int i = 0; i < n; i++) {
-        double sumpos = posoff + pos[i];
-        int j = (int)floor(sumpos), k = (int)((sumpos - j) * SDR_N_CODES);
+        int j = (int)floor(pos[i]), k = (int)((pos[i] - j) * SDR_N_CODES);
         int s = j % N;
         if (s < 0) s += N;
         sdr_cpx_t cf[2] = {{0}};
