@@ -812,19 +812,33 @@ void sdr_corr_std_flip(const sdr_cpx16_t *IQ, const sdr_cpx16_t *code, int N,
  * @param n
  * @param fliptest
  * @param corr
+ * @param P_bit
  */
 void sdr_corr_std_ring(const sdr_cpx16_t *IQ, const sdr_cpx16_t *code, int N,
-    const double *pos, int n, sdr_cpx_t *corr)
+    const double *pos, int n, sdr_cpx_t *corr, float *P_bit)
 {
     for (int i = 0; i < n; i++) {
         int j = (int)floor(pos[i]), k = (int)((pos[i] - j) * SDR_N_CODES);
         int s = j % N;
         if (s < 0) s += N;
-        sdr_cpx_t cf[2] = {{0}};
+        sdr_cpx_t cf[3] = {{0}};
         if (0 < j) {
             dot_IQ_code(IQ, code + (k + 1) * N - j, j, 1.0f / (double)N, &cf[0]);
             dot_IQ_code(IQ + j, code + k * N, N - j, 1.0f / (double)N, &cf[1]);
-        } else dot_IQ_code(IQ, code + k * N, N, 1.0f / (double)N, &cf[0]);
+            if (i == 0) {
+                if (N * 0.75 < j) {
+                    dot_IQ_code(IQ + j, code + k * N, (int)(N * 0.25), 1.0f / ((double)N * 0.25), &cf[2]);
+                    *P_bit = cf[2][0];
+                }
+                else {
+                    *P_bit = cf[1][0] * (double)N / (double)(N - j);
+                }
+            }
+        }
+        else {
+            dot_IQ_code(IQ, code + k * N, N, 1.0f / (double)N, &cf[0]);
+            if (i == 0) *P_bit = cf[0][0];
+        } 
         corr[i][0] = cf[0][0] + cf[1][0];
         corr[i][1] = cf[0][1] + cf[1][1];
     }

@@ -55,6 +55,7 @@
 //  2025-02-18  1.7  flip symbol polarity
 //
 #include "pocket_sdr.h"
+#include <cstring>
 
 // constants -------------------------------------------------------------------
 #define THRES_SYNC  0.05      // threshold for symbol sync
@@ -123,8 +124,15 @@ static float mean_IP(const sdr_ch_t *ch, int N)
 {
     float P = 0.0;
     
-    for (int i = 0; i < N; i++) {
-        P += (ch->trk->P[SDR_N_HIST-N+i][0] - P) / (i + 1);
+    if (!strcmp(ch->sig, "L1CA")) {
+        for (int i = 0; i < N; i++) {
+            P += (ch->trk->P_bit[SDR_N_HIST-N+i] - P) / (i + 1);
+        }
+    }
+    else {
+        for (int i = 0; i < N; i++) {
+            P += (ch->trk->P[SDR_N_HIST-N+i][0] - P) / (i + 1);
+        }
     }
     return P;
 }
@@ -136,8 +144,15 @@ static int sync_symb(sdr_ch_t *ch, int N)
         float P = mean_IP(ch, N);
         int n = 200 / N, R[100] = {0};
         for (int i = 0; i < n; i++) {
-            for (int j = 0; j < N; j++) {
-                R[i] += ch->trk->P[SDR_N_HIST-(i+1)*N+j][0] >= 0.0 ? 1 : -1;
+            if (!strcmp(ch->sig, "L1CA")) {
+                for (int j = 0; j < N; j++) {
+                    R[i] += ch->trk->P_bit[SDR_N_HIST-(i+1)*N+j] >= 0.0 ? 1 : -1;
+                }
+            }
+            else {
+                for (int j = 0; j < N; j++) {
+                    R[i] += ch->trk->P[SDR_N_HIST-(i+1)*N+j][0] >= 0.0 ? 1 : -1;
+                }
             }
             if (R[i] != N && R[i] != -N) return 0;
         }

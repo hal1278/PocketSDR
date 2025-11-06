@@ -18,6 +18,7 @@
 //  2024-08-26  1.10 support sdr_corr_std(), sdr_corr_fft() API changes
 //  2024-12-30  1.11 support Bump-jump for BOC modulation
 //
+#include <cstring>
 #include <ctype.h>
 #include <math.h>
 #include "pocket_sdr.h"
@@ -190,7 +191,7 @@ sdr_ch_t *sdr_ch_new(const char *sig, int prn, double fs, double fi)
     ch->acq = acq_new(ch->code, ch->len_code, ch->T, fs, ch->N);
     ch->trk = trk_new(ch->sig, ch->prn, ch->code, ch->len_code, ch->T, fs);
     ch->nav = sdr_nav_new();
-    ch->data = (sdr_cpx16_t *)sdr_malloc(sizeof(sdr_cpx16_t) * ch->N);
+    ch->data = (sdr_cpx16_t *)sdr_malloc(sizeof(sdr_cpx16_t) * ch->N * 2);
     if (!strcmp(ch->sig, "L6D") || !strcmp(ch->sig, "L6E")) {
         ch->corr = sdr_cpx_malloc(ch->N);
     }
@@ -226,6 +227,7 @@ static void trk_init(sdr_trk_t *trk)
     trk->sumP = trk->sumN = trk->sumVE = trk->sumVL = 0.0;
     memset(trk->C, 0, sizeof(sdr_cpx_t) * SDR_MAX_CORR);
     memset(trk->P, 0, sizeof(sdr_cpx_t) * SDR_N_HIST);
+    memset(trk->P_bit, 0, sizeof(float) * SDR_N_HIST);
     memset(trk->sumC, 0, sizeof(double) * SDR_MAX_CORR);
     memset(trk->aveP, 0, sizeof(double) * SDR_MAX_CORR);
 }
@@ -478,6 +480,10 @@ static void adj_coff(sdr_ch_t *ch)
         ch->lock--;
         memmove(ch->trk->P + 1, ch->trk->P, sizeof(sdr_cpx_t) *
             (SDR_N_HIST - 1));
+        if (!strcmp(ch->sig, "L1CA")) {
+            memmove(ch->trk->P_bit + 1, ch->trk->P_bit, sizeof(float) *
+                (SDR_N_HIST - 1));
+        }
     }
     else if (ch->coff < 0.0) {
         ch->coff += ch->T;
@@ -485,6 +491,10 @@ static void adj_coff(sdr_ch_t *ch)
         ch->lock++;
         memmove(ch->trk->P, ch->trk->P + 1, sizeof(sdr_cpx_t) *
             (SDR_N_HIST - 1));
+        if (!strcmp(ch->sig, "L1CA")) {
+            memmove(ch->trk->P_bit, ch->trk->P_bit + 1, sizeof(float) *
+                (SDR_N_HIST - 1));
+        }
     }
 }
 
@@ -576,7 +586,7 @@ static void track_sig_L1CA(sdr_ch_t *ch, double time, const sdr_buff_t *buff, in
 
     double phi = ch->fi * tau + ch->adr;
 
-    sdr_mix_carr(buff, ix, ch->N, ch->fs, fc, phi, ch->data);
+    sdr_mix_carr(buff, ix, (int)(ch->N * 1.25) + 1, ch->fs, fc, phi, ch->data);
     
     // correlate
     double coff_fs = ch->coff * ch->fs;
@@ -586,11 +596,13 @@ static void track_sig_L1CA(sdr_ch_t *ch, double time, const sdr_buff_t *buff, in
     }
     // sdr_corr_std_flip(ch->data, ch->trk->code, ch->N, pos,
     //     ch->trk->npos + ch->trk->nposx, 0, ch->trk->C);
+    float P_bit = {0};
     sdr_corr_std_ring(ch->data, ch->trk->code, ch->N, pos,
-        ch->trk->npos + ch->trk->nposx, ch->trk->C);
+        ch->trk->npos + ch->trk->nposx, ch->trk->C, &P_bit);
 
     // add P correlator outputs to history 
     sdr_add_buff(ch->trk->P, SDR_N_HIST, ch->trk->C[0], sizeof(sdr_cpx_t));
+    sdr_add_buff(ch->trk->P_bit, SDR_N_HIST, &P_bit, sizeof(float));
     update_tow(ch, ch->T);
     ch->lock++;
 
