@@ -363,6 +363,27 @@ static void PLL(sdr_ch_t *ch)
     }
 }
 
+// FLL + PLL -------------------------------------------------------------------
+// static void FPLL(sdr_ch_t *ch){
+//     if (ch->lock >= 2) {
+//         double IP1 = ch->trk->P[SDR_N_HIST-1][0];
+//         double QP1 = ch->trk->P[SDR_N_HIST-1][1];
+//         double IP2 = ch->trk->P[SDR_N_HIST-2][0];
+//         double QP2 = ch->trk->P[SDR_N_HIST-2][1];
+//         double dot   = IP1 * IP2 + QP1 * QP2;
+//         double cross = IP1 * QP2 - QP1 * IP2;
+//         if (IP1 != 0.0) {
+//             double err_phas = (ch->costas ? atan(QP1 / IP1) : atan2(QP1, IP1)) / DPI;
+//             double W = sdr_b_pll / 0.53;
+//             double err_freq = ch->costas ? atan(cross / dot) : atan2(cross, dot);
+//             ch->fd += 1.414 * W * (err_phas - ch->trk->err_phas) +
+//                 W * W * err_phas * ch->T +
+//                 150 / 0.25 * err_freq;
+//             ch->trk->err_phas = err_phas;
+//         }
+//     }
+// }
+
 // DLL -------------------------------------------------------------------------
 static void DLL(sdr_ch_t *ch)
 {
@@ -480,10 +501,10 @@ static void adj_coff(sdr_ch_t *ch)
         ch->lock--;
         memmove(ch->trk->P + 1, ch->trk->P, sizeof(sdr_cpx_t) *
             (SDR_N_HIST - 1));
-        if (!strcmp(ch->sig, "L1CA")) {
-            memmove(ch->trk->P_bit + 1, ch->trk->P_bit, sizeof(float) *
-                (SDR_N_HIST - 1));
-        }
+        // if (!strcmp(ch->sig, "L1CA")) {
+        //     memmove(ch->trk->P_bit + 1, ch->trk->P_bit, sizeof(float) *
+        //         (SDR_N_HIST - 1));
+        // }
     }
     else if (ch->coff < 0.0) {
         ch->coff += ch->T;
@@ -491,10 +512,10 @@ static void adj_coff(sdr_ch_t *ch)
         ch->lock++;
         memmove(ch->trk->P, ch->trk->P + 1, sizeof(sdr_cpx_t) *
             (SDR_N_HIST - 1));
-        if (!strcmp(ch->sig, "L1CA")) {
-            memmove(ch->trk->P_bit, ch->trk->P_bit + 1, sizeof(float) *
-                (SDR_N_HIST - 1));
-        }
+        // if (!strcmp(ch->sig, "L1CA")) {
+        //     memmove(ch->trk->P_bit, ch->trk->P_bit + 1, sizeof(float) *
+        //         (SDR_N_HIST - 1));
+        // }
     }
 }
 
@@ -586,7 +607,7 @@ static void track_sig_L1CA(sdr_ch_t *ch, double time, const sdr_buff_t *buff, in
 
     double phi = ch->fi * tau + ch->adr;
 
-    sdr_mix_carr(buff, ix, (int)(ch->N * 1.25) + 1, ch->fs, fc, phi, ch->data);
+    sdr_mix_carr(buff, ix, (int)(ch->N * 1.01) + 1, ch->fs, fc, phi, ch->data);
     
     // correlate
     double coff_fs = ch->coff * ch->fs;
@@ -596,13 +617,14 @@ static void track_sig_L1CA(sdr_ch_t *ch, double time, const sdr_buff_t *buff, in
     }
     // sdr_corr_std_flip(ch->data, ch->trk->code, ch->N, pos,
     //     ch->trk->npos + ch->trk->nposx, 0, ch->trk->C);
-    float P_bit = {0};
-    sdr_corr_std_ring(ch->data, ch->trk->code, ch->N, pos,
-        ch->trk->npos + ch->trk->nposx, ch->trk->C, &P_bit);
+    // float P_bit = {0};
+    int fliptest = ch->nav->ssync == 0 || (ch->lock - ch->nav->ssync) % 20 == 0;
+    sdr_corr_std_ring_flip(ch->data, ch->trk->code, ch->N, pos,
+        ch->trk->npos + ch->trk->nposx, fliptest, ch->trk->C);
 
     // add P correlator outputs to history 
     sdr_add_buff(ch->trk->P, SDR_N_HIST, ch->trk->C[0], sizeof(sdr_cpx_t));
-    sdr_add_buff(ch->trk->P_bit, SDR_N_HIST, &P_bit, sizeof(float));
+    // sdr_add_buff(ch->trk->P_bit, SDR_N_HIST, &P_bit, sizeof(float));
     update_tow(ch, ch->T);
     ch->lock++;
 
