@@ -364,25 +364,25 @@ static void PLL(sdr_ch_t *ch)
 }
 
 // FLL + PLL -------------------------------------------------------------------
-// static void FPLL(sdr_ch_t *ch){
-//     if (ch->lock >= 2) {
-//         double IP1 = ch->trk->P[SDR_N_HIST-1][0];
-//         double QP1 = ch->trk->P[SDR_N_HIST-1][1];
-//         double IP2 = ch->trk->P[SDR_N_HIST-2][0];
-//         double QP2 = ch->trk->P[SDR_N_HIST-2][1];
-//         double dot   = IP1 * IP2 + QP1 * QP2;
-//         double cross = IP1 * QP2 - QP1 * IP2;
-//         if (IP1 != 0.0) {
-//             double err_phas = (ch->costas ? atan(QP1 / IP1) : atan2(QP1, IP1)) / DPI;
-//             double W = sdr_b_pll / 0.53;
-//             double err_freq = ch->costas ? atan(cross / dot) : atan2(cross, dot);
-//             ch->fd += 1.414 * W * (err_phas - ch->trk->err_phas) +
-//                 W * W * err_phas * ch->T +
-//                 150 / 0.25 * err_freq;
-//             ch->trk->err_phas = err_phas;
-//         }
-//     }
-// }
+static void FPLL(sdr_ch_t *ch){
+    if (ch->lock >= 2) {
+        double IP1 = ch->trk->P[SDR_N_HIST-1][0];
+        double QP1 = ch->trk->P[SDR_N_HIST-1][1];
+        double IP2 = ch->trk->P[SDR_N_HIST-2][0];
+        double QP2 = ch->trk->P[SDR_N_HIST-2][1];
+        double dot   = IP1 * IP2 + QP1 * QP2;
+        double cross = IP1 * QP2 - QP1 * IP2;
+        if (IP1 != 0.0) {
+            double err_phas = (ch->costas ? atan(QP1 / IP1) : atan2(QP1, IP1)) / DPI;
+            double W = sdr_b_pll / 0.53;
+            double err_freq = ch->costas ? atan(cross / dot) : atan2(cross, dot);
+            ch->fd += 1.414 * W * (err_phas - ch->trk->err_phas)
+                + W * W * err_phas * ch->T
+                + 50 / 0.25 * err_freq * ch->T;
+            ch->trk->err_phas = err_phas;
+        }
+    }
+}
 
 // DLL -------------------------------------------------------------------------
 static void DLL(sdr_ch_t *ch)
@@ -395,7 +395,8 @@ static void DLL(sdr_ch_t *ch)
         double E = sqrt(ch->trk->sumC[1]);
         double L = sqrt(ch->trk->sumC[2]);
         if (E + L > 0.0) {
-            double err_code = (E - L) / (E + L) * (sdr_sp_corr / 2) * ch->T / ch->len_code;
+            // double err_code = (E - L) / (E + L) * (1 - sdr_sp_corr / 2) * ch->T / ch->len_code;
+            double err_code = (E - L) / (E + L) * 0.25 * ch->T / ch->len_code;
             ch->coff -= sdr_b_dll / 0.25 * err_code * ch->T * N;
             ch->trk->err_code = err_code;
         }
@@ -607,7 +608,7 @@ static void track_sig_L1CA(sdr_ch_t *ch, double time, const sdr_buff_t *buff, in
 
     double phi = ch->fi * tau + ch->adr;
 
-    sdr_mix_carr(buff, ix, (int)(ch->N * 1.01) + 1, ch->fs, fc, phi, ch->data);
+    sdr_mix_carr(buff, ix, (int)(ch->N * 1.2) + 1, ch->fs, fc, phi, ch->data);
     
     // correlate
     double coff_fs = ch->coff * ch->fs;
@@ -619,6 +620,7 @@ static void track_sig_L1CA(sdr_ch_t *ch, double time, const sdr_buff_t *buff, in
     //     ch->trk->npos + ch->trk->nposx, 0, ch->trk->C);
     // float P_bit = {0};
     int fliptest = ch->nav->ssync == 0 || (ch->lock - ch->nav->ssync) % 20 == 0;
+    // int fliptest = 1;
     sdr_corr_std_ring_flip(ch->data, ch->trk->code, ch->N, pos,
         ch->trk->npos + ch->trk->nposx, fliptest, ch->trk->C);
 
@@ -633,7 +635,8 @@ static void track_sig_L1CA(sdr_ch_t *ch, double time, const sdr_buff_t *buff, in
         FLL(ch);
     }
     else {
-        PLL(ch);
+        // PLL(ch);
+        FPLL(ch);
     }
     DLL(ch);
     CN0(ch);

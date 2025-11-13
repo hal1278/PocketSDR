@@ -146,6 +146,7 @@ static int sync_symb(sdr_ch_t *ch, int N)
     if (ch->nav->ssync == 0) {
         float P = mean_IP(ch, N);
         int n = 200 / N, R[100] = {0};
+        if (!strcmp(ch->sig, "L1CA")) n = 2;
         for (int i = 0; i < n; i++) {
             if (!strcmp(ch->sig, "L1CA")) {
                 for (int j = 0; j < N; j++) {
