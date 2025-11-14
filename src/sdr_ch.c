@@ -227,9 +227,10 @@ static void trk_init(sdr_trk_t *trk)
     trk->sumP = trk->sumN = trk->sumVE = trk->sumVL = 0.0;
     memset(trk->C, 0, sizeof(sdr_cpx_t) * SDR_MAX_CORR);
     memset(trk->P, 0, sizeof(sdr_cpx_t) * SDR_N_HIST);
-    memset(trk->P_bit, 0, sizeof(float) * SDR_N_HIST);
     memset(trk->sumC, 0, sizeof(double) * SDR_MAX_CORR);
     memset(trk->aveP, 0, sizeof(double) * SDR_MAX_CORR);
+    trk->coh = 0;
+    memset(trk->cohC, 0, sizeof(sdr_cpx_t));
 }
 
 // start tracking --------------------------------------------------------------
@@ -359,6 +360,56 @@ static void PLL(sdr_ch_t *ch)
         double W = sdr_b_pll / 0.53;
         ch->fd += 1.4 * W * (err_phas - ch->trk->err_phas) +
             W * W * err_phas * ch->T;
+        ch->trk->err_phas = err_phas;
+    }
+}
+
+// PLL with coherent integration (for L1CA) ------------------------------------
+static void PLL_coh(sdr_ch_t *ch)
+{
+    int cohN = 5;
+    int bitN = 20;
+    double IP;
+    double QP;
+    int coh;
+    if (ch->nav->ssync == 0) {
+        IP = ch->trk->C[0][0];
+        QP = ch->trk->C[0][1];
+        coh = 0;
+        if (ch->nav->syms[SDR_MAX_NSYM-1]) {
+            // データビットのロック喪失 ssync=0にリセットする箇所に書くべき?
+            memset(ch->trk->cohC, 0, sizeof(sdr_cpx_t));
+            ch->trk->coh = 0;
+        }
+    }
+    else if (!((ch->lock - ch->nav->ssync) % bitN % cohN)) {
+        ch->trk->cohC[0] += ch->trk->C[0][0];
+        ch->trk->cohC[1] += ch->trk->C[0][1];
+        IP = ch->trk->cohC[0];
+        QP = ch->trk->cohC[1];
+        coh = ++ch->trk->coh;
+        memset(ch->trk->cohC, 0, sizeof(sdr_cpx_t));
+        ch->trk->coh = 0;
+    }
+    else if (cohN < ch->trk->coh) {
+        IP = ch->trk->cohC[0];
+        QP = ch->trk->cohC[1];
+        coh = ch->trk->coh;
+        ch->trk->cohC[0] = ch->trk->C[0][0];
+        ch->trk->cohC[1] = ch->trk->C[0][1];
+        ch->trk->coh = 1;
+    }
+    else {
+        ch->trk->cohC[0] += ch->trk->C[0][0];
+        ch->trk->cohC[1] += ch->trk->C[0][1];
+        ch->trk->coh++;
+        return;
+    }
+    if (IP != 0.0) {
+        double err_phas = (ch->costas ? atan(QP / IP) : atan2(QP, IP)) / DPI;
+        double W = sdr_b_pll / 0.53;
+        ch->fd += 1.4 * W * (err_phas - ch->trk->err_phas) +
+            W * W * err_phas * ch->T * coh;
         ch->trk->err_phas = err_phas;
     }
 }
@@ -502,10 +553,6 @@ static void adj_coff(sdr_ch_t *ch)
         ch->lock--;
         memmove(ch->trk->P + 1, ch->trk->P, sizeof(sdr_cpx_t) *
             (SDR_N_HIST - 1));
-        // if (!strcmp(ch->sig, "L1CA")) {
-        //     memmove(ch->trk->P_bit + 1, ch->trk->P_bit, sizeof(float) *
-        //         (SDR_N_HIST - 1));
-        // }
     }
     else if (ch->coff < 0.0) {
         ch->coff += ch->T;
@@ -513,10 +560,6 @@ static void adj_coff(sdr_ch_t *ch)
         ch->lock++;
         memmove(ch->trk->P, ch->trk->P + 1, sizeof(sdr_cpx_t) *
             (SDR_N_HIST - 1));
-        // if (!strcmp(ch->sig, "L1CA")) {
-        //     memmove(ch->trk->P_bit, ch->trk->P_bit + 1, sizeof(float) *
-        //         (SDR_N_HIST - 1));
-        // }
     }
 }
 
@@ -616,17 +659,12 @@ static void track_sig_L1CA(sdr_ch_t *ch, double time, const sdr_buff_t *buff, in
     for (int j = 0; j < ch->trk->npos + ch->trk->nposx; j++){
         pos[j] = ch->trk->pos[j] + coff_fs;
     }
-    // sdr_corr_std_flip(ch->data, ch->trk->code, ch->N, pos,
-    //     ch->trk->npos + ch->trk->nposx, 0, ch->trk->C);
-    // float P_bit = {0};
     int fliptest = ch->nav->ssync == 0 || (ch->lock - ch->nav->ssync) % 20 == 0;
-    // int fliptest = 1;
     sdr_corr_std_ring_flip(ch->data, ch->trk->code, ch->N, pos,
         ch->trk->npos + ch->trk->nposx, fliptest, ch->trk->C);
 
     // add P correlator outputs to history 
     sdr_add_buff(ch->trk->P, SDR_N_HIST, ch->trk->C[0], sizeof(sdr_cpx_t));
-    // sdr_add_buff(ch->trk->P_bit, SDR_N_HIST, &P_bit, sizeof(float));
     update_tow(ch, ch->T);
     ch->lock++;
 
@@ -636,7 +674,8 @@ static void track_sig_L1CA(sdr_ch_t *ch, double time, const sdr_buff_t *buff, in
     }
     else {
         // PLL(ch);
-        FPLL(ch);
+        // FPLL(ch);
+        PLL_coh(ch);
     }
     DLL(ch);
     CN0(ch);

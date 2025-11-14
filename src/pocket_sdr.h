@@ -135,7 +135,6 @@ typedef struct {                // signal tracking type
     double pos[SDR_MAX_CORR];   // correlator positions 
     sdr_cpx_t C[SDR_MAX_CORR];  // correlations 
     sdr_cpx_t P[SDR_N_HIST];    // history of P correlations 
-    float P_bit[SDR_N_HIST];    // history of P correlations 
     int sec_sync;               // secondary code sync status 
     int sec_pol;                // secondary code polarity 
     double err_phas;            // phase error (cyc) 
@@ -143,6 +142,8 @@ typedef struct {                // signal tracking type
     double sumP, sumN, sumVE, sumVL; // sum of correlations 
     double sumC[SDR_MAX_CORR];  // sum of correlations DLL
     double aveP[SDR_MAX_CORR];  // average of correlation powers
+    sdr_cpx_t cohC;
+    int coh;
     sdr_cpx16_t *code;          // resampled code 
     sdr_cpx_t *code_fft;        // code FFT
 } sdr_trk_t;
