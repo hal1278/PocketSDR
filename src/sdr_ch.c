@@ -408,7 +408,7 @@ static void PLL_coh(sdr_ch_t *ch)
     if (IP != 0.0) {
         double err_phas = (ch->costas ? atan(QP / IP) : atan2(QP, IP)) / DPI;
         double W = sdr_b_pll / 0.53;
-        ch->fd += 1.4 * W * (err_phas - ch->trk->err_phas) +
+        ch->fd += 1.414 * W * (err_phas - ch->trk->err_phas) +
             W * W * err_phas * ch->T * coh;
         ch->trk->err_phas = err_phas;
     }
@@ -638,8 +638,8 @@ static void track_sig(sdr_ch_t *ch, double time, const sdr_buff_t *buff, int ix)
     }
 }
 
-// track signal for L1C/A ------------------------------------------------------
-static void track_sig_L1CA(sdr_ch_t *ch, double time, const sdr_buff_t *buff, int ix)
+// track signal with aligned IF data window ------------------------------------
+static void track_sig_aw(sdr_ch_t *ch, double time, const sdr_buff_t *buff, int ix)
 {
     double tau = time - ch->time;
     double fc = ch->fi + ch-> fd;
@@ -659,7 +659,13 @@ static void track_sig_L1CA(sdr_ch_t *ch, double time, const sdr_buff_t *buff, in
     for (int j = 0; j < ch->trk->npos + ch->trk->nposx; j++){
         pos[j] = ch->trk->pos[j] + coff_fs;
     }
-    int fliptest = ch->nav->ssync == 0 || (ch->lock - ch->nav->ssync) % 20 == 0;
+    int fliptest = 1;
+    if (!strcmp(ch->sig, "L1CA")) {
+        fliptest = ch->nav->ssync == 0 || (ch->lock - ch->nav->ssync) % 20 == 0;
+    }
+    else if (!strcmp(ch->sig, "L5I")) {
+        fliptest = ch->sec_code == 0;
+    }
     sdr_corr_std_ring_flip(ch->data, ch->trk->code, ch->N, pos,
         ch->trk->npos + ch->trk->nposx, fliptest, ch->trk->C);
 
@@ -668,14 +674,21 @@ static void track_sig_L1CA(sdr_ch_t *ch, double time, const sdr_buff_t *buff, in
     update_tow(ch, ch->T);
     ch->lock++;
 
+    // sync and remove secondary code 
+    if (ch->len_sec_code >= 2 && ch->lock * ch->T >= T_NPULLIN) {
+        sync_sec_code(ch, ch->len_sec_code);
+    }
     // FLL/PLL, DLL and update C/N0 
     if (ch->lock * ch->T <= T_FPULLIN) {
         FLL(ch);
     }
-    else {
+    else if (!strcmp(ch->sig, "L1CA")) {
         // PLL(ch);
         // FPLL(ch);
         PLL_coh(ch);
+    }
+    else {
+        PLL(ch);
     }
     DLL(ch);
     CN0(ch);
@@ -729,8 +742,8 @@ void sdr_ch_update(sdr_ch_t *ch, double time, const sdr_buff_t *buff, int ix)
     }
     else if (ch->state == SDR_STATE_LOCK) {
         pthread_mutex_lock(&ch->mtx);
-        if (!strcmp(ch->sig, "L1CA")) {
-            track_sig_L1CA(ch, time, buff, ix);
+        if (!strcmp(ch->sig, "L1CA") || !strcmp(ch->sig, "L5I")) {
+            track_sig_aw(ch, time, buff, ix);
         }
         else {
             track_sig(ch, time, buff, ix);

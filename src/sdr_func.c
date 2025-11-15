@@ -814,13 +814,14 @@ void sdr_corr_std_ring(const sdr_cpx16_t *IQ, const sdr_cpx16_t *code, int N,
 void sdr_corr_std_ring_flip(const sdr_cpx16_t *IQ, const sdr_cpx16_t *code, int N,
     const double *pos, int n, int fliptest, sdr_cpx_t *corr)
 {
-    int flip = 0;
+    sdr_cpx_t cf[3];
     for (int i = 0; i < n; i++){
         int j = (int)floor(pos[i]), k = (int)((pos[i] - j) * SDR_N_CODES);
         j %= N;
         if (j < 0) j += N;
-        sdr_cpx_t cf[3];
         if (0 < j) {
+#if 0 // 反転があり得る場合、反転の判定をする
+            int flip = 0;
             dot_IQ_code(IQ, code + (k + 1) * N - j, j, 1, &cf[0]);
             dot_IQ_code(IQ + j, code + k * N, N - j, 1, &cf[1]);
             if (i == 0 && fliptest) {
@@ -830,10 +831,10 @@ void sdr_corr_std_ring_flip(const sdr_cpx16_t *IQ, const sdr_cpx16_t *code, int 
                 if (N * 0.8 < j) {
                     dot_IQ_code(IQ + j, code + k * N, (int)(N * 0.2), 1, &cf[2]);
                     dot = cf[0][0] * cf[2][0] + cf[0][1] * cf[2][1];
-                    sum[0] = cf[0][0] / j + cf[2][0] / (N * 0.2);
-                    sum[1] = cf[0][1] / j + cf[2][1] / (N * 0.2);
-                    sum_fl[0] = - cf[0][0] / j + cf[2][0] / (N * 0.2);
-                    sum_fl[1] = - cf[0][1] / j + cf[2][1] / (N * 0.2);
+                    sum[0] = cf[0][0] / j + cf[2][0] / (int)(N * 0.2);
+                    sum[1] = cf[0][1] / j + cf[2][1] / (int)(N * 0.2);
+                    sum_fl[0] = - cf[0][0] / j + cf[2][0] / (int)(N * 0.2);
+                    sum_fl[1] = - cf[0][1] / j + cf[2][1] / (int)(N * 0.2);
                     I_prod = cf[0][0] * cf[2][0];
                 } else {
                     dot = cf[0][0] * cf[1][0] + cf[0][1] * cf[1][1];
@@ -856,6 +857,24 @@ void sdr_corr_std_ring_flip(const sdr_cpx16_t *IQ, const sdr_cpx16_t *code, int 
                 corr[i][0] = (cf[0][0] + cf[1][0]) / N;
                 corr[i][1] = (cf[0][1] + cf[1][1]) / N;
             }
+#else // 反転があり得る場合、反転の判定をせず、後半のみ用いる
+            if (fliptest) {
+                cf[0][0] = 0;
+                cf[0][1] = 0;
+                if (N * 0.8 < j) {
+                    dot_IQ_code(IQ + j, code + k * N, (int)(N * 0.2), 1.0f / (int)(N * 0.2), &cf[1]);
+                }
+                else {
+                    dot_IQ_code(IQ + j, code + k * N, N - j, 1.0f / (N - j), &cf[1]);
+                }
+            }
+            else {
+                dot_IQ_code(IQ, code + (k + 1) * N - j, j, 1.0f / N, &cf[0]);
+                dot_IQ_code(IQ + j, code + k * N, N - j, 1.0f / N, &cf[1]);
+            }
+            corr[i][0] = cf[0][0] + cf[1][0];
+            corr[i][1] = cf[0][1] + cf[1][1];
+#endif
         }
         else {
             dot_IQ_code(IQ, code + k * N, N, 1.0f / N, corr + i);
