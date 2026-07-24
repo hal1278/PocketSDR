@@ -1302,6 +1302,8 @@ Top-level receiver lifecycle and state queries. A receiver wraps a front-end (US
   from `.pocket_navdata.csv` navigation/almanac data plus the last FIX position
   and receiver clock drift rate; the saved position is ignored if its timestamp
   differs from the current GPST by more than one day.
+- `-OFFLINE` — pace local file replay by acquisition/tracking consumption,
+  disable `-FAST_SRCH`, ignore `tscale`, and drain channel data at EOF.
 - `-GAIN=<dB>` / `-BW=<MHz>` — SoapySDR gain and analog bandwidth options
   passed through `sdr_rcv_open_sdev()`.
 - `-E5AB_OFF=<ns>` — Galileo E5AltBOC code offset correction.

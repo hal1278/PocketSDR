@@ -8,6 +8,7 @@
 #define TMP_LOG1     "tmp_test_rcv_log1.log"
 #define TMP_LOG2     "tmp_test_rcv_log2.log"
 #define TMP_NMEA     "tmp_test_rcv_nmea.nmea"
+#define IF_FILE      "test_sdr_rcv_if.bin"
 
 extern double sdr_epoch;
 extern double sdr_t_acq;
@@ -15,6 +16,7 @@ extern double sdr_t_acq_ext;
 extern double sdr_t_coh;
 extern double sdr_thres_cn0_ext;
 extern double sdr_max_acq;
+extern double sdr_thres_cn0_l;
 extern int sdr_bump_jump;
 
 static const int EMPTY_TYPES[SDR_MAX_STR] = {0};
@@ -38,6 +40,29 @@ static void cleanup_files(void)
 {
     remove(NAVDATA_FILE);
     remove(TRACE_FILE);
+    remove(IF_FILE);
+}
+
+// create zero-filled test IF file --------------------------------------------
+static void write_if_file(int ncyc)
+{
+    uint8_t raw[4000] = {0};
+    FILE *fp = fopen(IF_FILE, "wb");
+    TEST_ASSERT_TRUE(fp != NULL);
+    for (int i = 0; i < ncyc; i++) {
+        TEST_ASSERT_EQ_INT(sizeof(raw), fwrite(raw, 1, sizeof(raw), fp));
+    }
+    fclose(fp);
+}
+
+// wait for receiver thread to reach EOF --------------------------------------
+static int wait_rcv_end(sdr_rcv_t *rcv, uint32_t timeout)
+{
+    uint32_t tick = sdr_get_tick();
+    while (rcv->state && sdr_get_tick() - tick < timeout) {
+        sdr_sleep_msec(1);
+    }
+    return !rcv->state;
 }
 
 // create receiver without tracking channels -----------------------------------
@@ -283,6 +308,86 @@ static void test_sdr_rcv_str_error_api(void)
     cleanup_files();
 }
 
+// test offline initial acquisition and EOF drain -----------------------------
+static void test_sdr_rcv_offline_eof_drain(void)
+{
+    const char *sigs[] = {"L1CA", "L1CA"};
+    int prns[] = {1, 2};
+    double fo[SDR_MAX_RFCH] = {0}, t_acq0 = sdr_t_acq;
+    int IQ[SDR_MAX_RFCH] = {2, 2, 2, 2, 2, 2, 2, 2};
+    int bits[SDR_MAX_RFCH] = {8, 8, 8, 8, 8, 8, 8, 8};
+
+    write_if_file(5);
+    sdr_t_acq = 0.020;
+    sdr_rcv_t *rcv = sdr_rcv_open_file(sigs, prns, 2, SDR_FMT_INT8, 4e6,
+        fo, IQ, bits, 0.0, 1000.0, IF_FILE, EMPTY_TYPES, EMPTY_PATHS,
+        "-OFFLINE -FAST_SRCH");
+    TEST_ASSERT_TRUE(rcv != NULL);
+    TEST_ASSERT_TRUE(wait_rcv_end(rcv, 10000));
+    TEST_ASSERT_EQ_INT(1, rcv->offline);
+    TEST_ASSERT_EQ_INT(0, rcv->fast_acq);
+    TEST_ASSERT_EQ_INT(1, rcv->offline_eof);
+    TEST_ASSERT_EQ_INT(4, rcv->offline_final_ix);
+    for (int i = 0; i < 2; i++) {
+        TEST_ASSERT_EQ_INT(1, rcv->th[i]->initial_acq);
+        TEST_ASSERT_EQ_INT(1, rcv->th[i]->drained);
+        TEST_ASSERT_EQ_INT(3, rcv->th[i]->ix);
+        TEST_ASSERT_EQ_INT(SDR_STATE_IDLE, rcv->th[i]->ch->state);
+        TEST_ASSERT_TRUE(rcv->th[i]->ch->acq->P_sum == NULL);
+        TEST_ASSERT_EQ_INT(0, rcv->th[i]->ch->acq->n_sum);
+    }
+    sdr_rcv_close(rcv);
+    sdr_t_acq = t_acq0;
+    cleanup_files();
+}
+
+// test offline failed acquisition is not scheduled again ---------------------
+static void test_sdr_rcv_offline_initial_failure(void)
+{
+    const char *sigs[] = {"L1CA"};
+    int prns[] = {1};
+    double fo[SDR_MAX_RFCH] = {0}, t_acq0 = sdr_t_acq;
+    double thres0 = sdr_thres_cn0_l;
+    int IQ[SDR_MAX_RFCH] = {2, 2, 2, 2, 2, 2, 2, 2};
+    int bits[SDR_MAX_RFCH] = {8, 8, 8, 8, 8, 8, 8, 8};
+
+    write_if_file(12);
+    sdr_t_acq = 0.003;
+    sdr_thres_cn0_l = 1000.0;
+    sdr_rcv_t *rcv = sdr_rcv_open_file(sigs, prns, 1, SDR_FMT_INT8, 4e6,
+        fo, IQ, bits, 0.0, 0.001, IF_FILE, EMPTY_TYPES, EMPTY_PATHS,
+        "-OFFLINE");
+    TEST_ASSERT_TRUE(rcv != NULL);
+    TEST_ASSERT_TRUE(wait_rcv_end(rcv, 10000));
+    TEST_ASSERT_EQ_INT(1, rcv->th[0]->initial_acq);
+    TEST_ASSERT_EQ_INT(0, rcv->th[0]->reacq);
+    TEST_ASSERT_EQ_INT(10, rcv->th[0]->ix);
+    TEST_ASSERT_EQ_INT(SDR_STATE_IDLE, rcv->th[0]->ch->state);
+    TEST_ASSERT_TRUE(rcv->th[0]->ch->acq->P_sum == NULL);
+    sdr_rcv_close(rcv);
+    sdr_t_acq = t_acq0;
+    sdr_thres_cn0_l = thres0;
+    cleanup_files();
+}
+
+// test offline EOF drain with no channels ------------------------------------
+static void test_sdr_rcv_offline_no_channels(void)
+{
+    double fo[SDR_MAX_RFCH] = {0};
+    int IQ[SDR_MAX_RFCH] = {2, 2, 2, 2, 2, 2, 2, 2};
+    int bits[SDR_MAX_RFCH] = {8, 8, 8, 8, 8, 8, 8, 8};
+
+    write_if_file(100);
+    sdr_rcv_t *rcv = sdr_rcv_open_file(NULL, NULL, 0, SDR_FMT_INT8, 4e6,
+        fo, IQ, bits, 0.0, 0.0, IF_FILE, EMPTY_TYPES, EMPTY_PATHS, "-OFFLINE");
+    TEST_ASSERT_TRUE(rcv != NULL);
+    TEST_ASSERT_TRUE(wait_rcv_end(rcv, 2000));
+    TEST_ASSERT_EQ_INT(1, rcv->offline_eof);
+    TEST_ASSERT_EQ_INT(99, rcv->offline_final_ix);
+    sdr_rcv_close(rcv);
+    cleanup_files();
+}
+
 // test sdr_rcv_setopt() -------------------------------------------------------
 static void test_sdr_rcv_setopt_api(void)
 {
@@ -466,6 +571,9 @@ int main(void)
     TEST_RUN(test_sdr_rcv_open_close_api);
     TEST_RUN(test_sdr_rcv_multi_str_api);
     TEST_RUN(test_sdr_rcv_str_error_api);
+    TEST_RUN(test_sdr_rcv_offline_eof_drain);
+    TEST_RUN(test_sdr_rcv_offline_initial_failure);
+    TEST_RUN(test_sdr_rcv_offline_no_channels);
     TEST_RUN(test_sdr_rcv_setopt_api);
     TEST_RUN(test_sdr_rcv_status_api);
     TEST_RUN(test_sdr_rcv_rfch_data_api);

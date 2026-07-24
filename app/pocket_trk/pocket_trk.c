@@ -53,7 +53,8 @@ static const char *usage_text[] = {
     "Usage: pocket_trk [-sig sig -prn prn[,...] [-rfch ch[,...]] ...]",
     "       [-fmt {INT8|INT8X2|RAW8|RAW16|RAW32|CS8|CS16}] [-f freq]",
     "       [-fo freq[,...]] [-IQ {1|2}[,...]] [-bits {2|3}[,...]",
-    "       [-toff toff] [-ti tint] [-p bus,[,port] [-c conf_file]",
+    "       [-toff toff] [-tscale scale] [-offline] [-ti tint]",
+    "       [-p bus,[,port] [-c conf_file]",
     "       [-driver name] [-gain gain] [-bw bw] [-fd dopp]",
     "       [-log path] [-nmea path] [-rtcm path] [-raw path] ... [-opt file]",
     "       [-arch nch] [-geom file] [file]",
@@ -200,7 +201,7 @@ int main(int argc, char **argv)
     int prns[SDR_MAX_NCH], nch = 0, fmt = SDR_FMT_INT8X2;
     int IQ[SDR_MAX_RFCH] = {2, 2, 2, 2, 2, 2, 2, 2};
     int bits[SDR_MAX_RFCH] = {2, 2, 2, 2, 2, 2, 2, 2};
-    int dev_type = SDR_DEV_FILE, bus = -1, port = -1, nrow = 0;
+    int dev_type = SDR_DEV_FILE, bus = -1, port = -1, nrow = 0, offline = 0;
     int max_row = MAX_ROW;
     double fs = 12e6, fo[SDR_MAX_RFCH] = {0}, toff = 0.0, tscale = 1.0;
     double tint = 0.1;
@@ -233,6 +234,8 @@ int main(int argc, char **argv)
             toff = atof(argv[++i]);
         } else if (!strcmp(argv[i], "-tscale") && i + 1 < argc) {
             tscale = atof(argv[++i]);
+        } else if (!strcmp(argv[i], "-offline")) {
+            offline = 1;
         } else if (!strcmp(argv[i], "-fmt") && i + 1 < argc) {
             const char *str = argv[++i];
             if      (!strcmp(str, "INT8"  )) fmt = SDR_FMT_INT8;
@@ -331,6 +334,10 @@ int main(int argc, char **argv)
         snprintf(rfch_opt + len, sizeof(rfch_opt) - len, " -BW=%.3f", bw);
     }
     if (*file) {
+        if (offline) {
+            size_t len = strlen(rfch_opt);
+            snprintf(rfch_opt + len, sizeof(rfch_opt) - len, " -OFFLINE");
+        }
         rcv = sdr_rcv_open_file(sigs, prns, nch, fmt, fs, fo, IQ, bits, toff,
             tscale, file, types, paths, rfch_opt);
     } else if (*driver) {

@@ -303,7 +303,7 @@ If a tag file `<file>.tag` exists alongside the input, the IF format, sampling f
 pocket_trk [-sig sig -prn prn[,...] [-rfch ch[,...]] ...]
            [-fmt {INT8|INT8X2|RAW8|RAW16|RAW16I|RAW32|CS8|CS16}]
            [-f freq] [-fo freq[,...]] [-IQ {1|2}[,...]] [-bits {2|3}[,...]]
-           [-toff toff] [-tscale scale] [-ti tint]
+           [-toff toff] [-tscale scale] [-offline] [-ti tint]
            [-p bus[,port]] [-c conf_file]
            [-driver name] [-gain gain] [-bw bw] [-fd dopp]
            [-log path] [-nmea path] [-rtcm path] [-raw path] ...
@@ -338,6 +338,8 @@ The input can be a local file, a TCP stream, a Pocket SDR FE device, or a SoapyS
   - Time offset from the start of the IF data in s. [`0.0`]
 - `-tscale scale`
   - Replay time scale for file inputs. [`1.0`]
+- `-offline`
+  - Process a local IF file at the pace of acquisition/tracking consumers. This mode uses bounded read-ahead with backpressure, drains pending channel data at EOF, and ignores `-tscale`. The equivalent receiver option is `-OFFLINE`, which can also be entered in the Pocket SDR GUI receiver-options field.
 - `-ti tint`
   - Update interval of the runtime tracking status in s. `0` suppresses the status display. [`0.1`]
 - `-p bus[,port]`

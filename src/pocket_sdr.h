@@ -286,6 +286,11 @@ typedef struct {                // SDR receiver channel thread type
     int state;                  // state (0:stop,1:run)
     sdr_ch_t *ch;               // SDR receiver channel
     int64_t ix;                 // IF data buffer read pointer (cyc)
+    int initial_acq;            // initial acquisition scheduled flag
+    int reacq;                  // offline re-acquisition active flag
+    int drained;                // offline EOF drain completed flag
+    int64_t reacq_end;          // re-acquisition deadline (cyc)
+    double reacq_fd;            // re-acquisition Doppler center (Hz)
     struct sdr_rcv_tag *rcv;    // pointer to SDR receiver
     sdr_thread_t thread;        // SDR receiver channel thread
 } sdr_ch_th_t;
@@ -394,6 +399,9 @@ typedef struct sdr_rcv_tag {    // SDR receiver type
     double tscale;              // time scale to replay IF data file
     char opt[1024];             // receiver options
     int fast_acq;               // fast acquisition flag (0:off, 1:on)
+    int offline;                // local file offline processing flag
+    int offline_eof;            // offline EOF reached flag
+    int64_t offline_final_ix;   // final written IF data cycle
     sdr_thread_t thread;        // SDR receiver thread
     sdr_mutex_t mtx;            // lock flag
 } sdr_rcv_t;

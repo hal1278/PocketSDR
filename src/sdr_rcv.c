@@ -522,6 +522,85 @@ static void ch_th_free(sdr_ch_th_t *th)
     sdr_free(th);
 }
 
+// get channel thread read index ----------------------------------------------
+static int64_t get_ch_ix(sdr_ch_th_t *th)
+{
+    sdr_mutex_lock(&th->rcv->mtx);
+    int64_t ix = th->ix;
+    sdr_mutex_unlock(&th->rcv->mtx);
+    return ix;
+}
+
+// set channel thread read index ----------------------------------------------
+static void set_ch_ix(sdr_ch_th_t *th, int64_t ix)
+{
+    sdr_mutex_lock(&th->rcv->mtx);
+    th->ix = ix;
+    sdr_mutex_unlock(&th->rcv->mtx);
+}
+
+// get offline EOF state -------------------------------------------------------
+static int get_offline_eof(sdr_ch_th_t *th, int64_t *final_ix)
+{
+    sdr_rcv_t *rcv = th->rcv;
+    sdr_mutex_lock(&rcv->mtx);
+    int eof = rcv->offline_eof && !th->drained;
+    *final_ix = rcv->offline_final_ix;
+    sdr_mutex_unlock(&rcv->mtx);
+    return eof;
+}
+
+// finish incomplete acquisition at offline EOF -------------------------------
+static void finish_offline_ch(sdr_ch_th_t *th, int64_t final_ix)
+{
+    sdr_ch_t *ch = th->ch;
+    if (ch->state == SDR_STATE_SRCH) {
+        double time = (final_ix >= 0 ? final_ix : 0) * SDR_CYC;
+        sdr_log(3, "$LOG,%.3f,%s,%d,ACQUISITION INCOMPLETE AT EOF", time,
+            ch->sig, ch->prn);
+        sdr_free(ch->acq->P_sum);
+        ch->acq->P_sum = NULL;
+        ch->acq->n_sum = 0;
+        ch->acq->fd_ext = 0.0;
+        ch->acq->fd_ext_n = 0;
+        ch->state = SDR_STATE_IDLE;
+    }
+    th->reacq = 0;
+    sdr_mutex_lock(&th->rcv->mtx);
+    th->drained = 1;
+    sdr_mutex_unlock(&th->rcv->mtx);
+}
+
+// update offline acquisition state after one channel epoch -------------------
+static void update_offline_ch(sdr_ch_th_t *th, int64_t ix, int prev_state,
+    int prev_lock, double prev_fd)
+{
+    sdr_ch_t *ch = th->ch;
+    int n = ch->N / th->rcv->N;
+    if (prev_state == SDR_STATE_LOCK && ch->state == SDR_STATE_IDLE) {
+        th->reacq = prev_lock * ch->T >= MIN_LOCK;
+        if (th->reacq) {
+            th->reacq_fd = prev_fd;
+            th->reacq_end = ix + (int64_t)(TO_REACQ / SDR_CYC);
+            ch->acq->fd_ext = (float)prev_fd;
+            ch->acq->fd_ext_n = 3;
+            ch->state = SDR_STATE_SRCH;
+        }
+    } else if (prev_state == SDR_STATE_SRCH && th->reacq) {
+        if (ch->state == SDR_STATE_LOCK) {
+            th->reacq = 0;
+        } else if (ch->state == SDR_STATE_IDLE) {
+            if (ix + n < th->reacq_end) {
+                ch->acq->fd_ext = (float)th->reacq_fd;
+                ch->acq->fd_ext_n = 3;
+                ch->state = SDR_STATE_SRCH;
+            } else {
+                th->reacq = 0;
+            }
+        }
+    }
+}
+
 // SDR receiver CH thread ------------------------------------------------------
 static void *ch_thread(void *arg)
 {
@@ -530,12 +609,18 @@ static void *ch_thread(void *arg)
     int n = ch->N / th->rcv->N;
     
     while (th->state) {
+        int64_t ch_ix = get_ch_ix(th);
         int64_t ix = get_buff_ix(th->rcv);
-        for ( ; th->ix + 2 * n <= ix && th->state; th->ix += n) {
+        for ( ; ch_ix + 2 * n <= ix && th->state; ch_ix += n) {
+            int prev_state = ch->state, prev_lock = ch->lock;
+            double prev_fd = ch->fd;
             
             // update SDR receiver CH
-            sdr_ch_update(ch, th->ix * SDR_CYC, th->rcv->buff[ch->rf_ch],
-                th->rcv->N * (int)(th->ix % MAX_BUFF));
+            sdr_ch_update(ch, ch_ix * SDR_CYC, th->rcv->buff[ch->rf_ch],
+                th->rcv->N * (int)(ch_ix % MAX_BUFF));
+            if (th->rcv->offline) {
+                update_offline_ch(th, ch_ix, prev_state, prev_lock, prev_fd);
+            }
             
             // update navigation data
             if (ch->nav->stat) {
@@ -543,7 +628,13 @@ static void *ch_thread(void *arg)
                 ch->nav->stat = 0;
             }
             // update observation data
-            sdr_pvt_udobs(th->rcv->pvt, th->ix, ch);
+            sdr_pvt_udobs(th->rcv->pvt, ch_ix, ch);
+            set_ch_ix(th, ch_ix + n);
+        }
+        int64_t final_ix;
+        if (th->rcv->offline && get_offline_eof(th, &final_ix) &&
+            ch_ix + 2 * n > final_ix) {
+            finish_offline_ch(th, final_ix);
         }
         sdr_sleep_msec(TH_CYC);
     }
@@ -1243,13 +1334,73 @@ static void update_scale(sdr_rcv_t *rcv)
     }
 }
 
+// schedule initial offline acquisition for all direct-search channels --------
+static void schedule_offline_acq(sdr_rcv_t *rcv)
+{
+    for (int i = 0; i < rcv->nch; i++) {
+        sdr_ch_th_t *th = rcv->th[i];
+        if (th->ch->sig_srch && th->ch->T <= sdr_max_acq * 1e-3) {
+            th->initial_acq = 1;
+            th->ch->state = SDR_STATE_SRCH;
+        }
+    }
+}
+
+// wait for safe offline IF buffer write position -----------------------------
+static int wait_offline_buff(sdr_rcv_t *rcv, int64_t write_ix)
+{
+    int max_n = 0;
+    for (int i = 0; i < rcv->nch; i++) {
+        int n = rcv->th[i]->ch->N / rcv->N;
+        if (n > max_n) max_n = n;
+    }
+    int64_t limit = MAX_BUFF - (2 * max_n + 1);
+    if (limit < 1) limit = 1;
+    while (rcv->state && rcv->nch > 0) {
+        int64_t min_ix;
+        sdr_mutex_lock(&rcv->mtx);
+        min_ix = rcv->th[0]->ix;
+        for (int i = 1; i < rcv->nch; i++) {
+            if (rcv->th[i]->ix < min_ix) min_ix = rcv->th[i]->ix;
+        }
+        sdr_mutex_unlock(&rcv->mtx);
+        if (write_ix - min_ix < limit) break;
+        sdr_sleep_msec(1);
+    }
+    return rcv->state;
+}
+
+// publish final offline IF buffer write position -----------------------------
+static void set_offline_eof(sdr_rcv_t *rcv, int64_t final_ix)
+{
+    sdr_mutex_lock(&rcv->mtx);
+    rcv->offline_final_ix = final_ix;
+    rcv->offline_eof = 1;
+    sdr_mutex_unlock(&rcv->mtx);
+}
+
+// test whether all offline channel threads drained ---------------------------
+static int offline_drained(sdr_rcv_t *rcv)
+{
+    int drained = 1;
+    sdr_mutex_lock(&rcv->mtx);
+    for (int i = 0; i < rcv->nch; i++) {
+        if (!rcv->th[i]->drained) {
+            drained = 0;
+            break;
+        }
+    }
+    sdr_mutex_unlock(&rcv->mtx);
+    return drained;
+}
+
 // update IF data buffer usage rate --------------------------------------------
 static void update_buff_use(sdr_rcv_t *rcv)
 {
     rcv->stats.buff_use = 0.0;
     int64_t ix = get_buff_ix(rcv);
     for (int i = 0; i < rcv->nch; i++) {
-        double use = (ix - rcv->th[i]->ix) * 100.0 / MAX_BUFF;
+        double use = (ix - get_ch_ix(rcv->th[i])) * 100.0 / MAX_BUFF;
         if (use > rcv->stats.buff_use) rcv->stats.buff_use = use;
     }
 }
@@ -1314,9 +1465,17 @@ static void *rcv_thread(void *arg)
             sum_size = 0;
             out_log_time(ix * SDR_CYC);
         }
+        if (rcv->offline && !wait_offline_buff(rcv, ix)) break;
         // read raw IF data
         if (!(size = read_data(rcv, raw, ns * rcv->N))) {
-            sdr_sleep_msec(500);
+            if (rcv->offline) {
+                set_offline_eof(rcv, ix - 1);
+                while (rcv->state && !offline_drained(rcv)) {
+                    sdr_sleep_msec(1);
+                }
+            } else {
+                sdr_sleep_msec(500);
+            }
             rcv->state = 0;
             continue;
         }
@@ -1330,7 +1489,7 @@ static void *rcv_thread(void *arg)
             1e-6;
         
         // update signal search channel
-        update_srch_ch(rcv);
+        if (!rcv->offline) update_srch_ch(rcv);
         
         // update PVT solution
         sdr_pvt_udsol(rcv->pvt, ix);
@@ -1341,7 +1500,7 @@ static void *rcv_thread(void *arg)
             update_scale(rcv);
         }
         // sleep if reading file
-        if (rcv->dev == SDR_DEV_FILE) {
+        if (rcv->dev == SDR_DEV_FILE && !rcv->offline) {
             sdr_sleep_msec((int)(ix - (sdr_get_tick() - tick) * rcv->tscale));
         }
     }
@@ -1382,6 +1541,21 @@ int sdr_rcv_start(sdr_rcv_t *rcv, int dev, void *dp, const int *types,
     int level = TRACE_LEVEL, log_level = LOG_LEVEL, IQ[8] = {0}, bits[8] = {0};
     
     if (!rcv || rcv->state) return 0;
+    rcv->offline = dev == SDR_DEV_FILE && strstr(rcv->opt, "-OFFLINE");
+    rcv->offline_eof = 0;
+    rcv->offline_final_ix = -1;
+    rcv->fast_acq = strstr(rcv->opt, "-FAST_SRCH") ? 1 : 0;
+    if (rcv->offline && rcv->fast_acq) {
+        fprintf(stderr, "warning: -FAST_SRCH ignored in offline mode\n");
+        rcv->fast_acq = 0;
+    }
+    for (int i = 0; i < rcv->nch; i++) {
+        rcv->th[i]->ix = 0;
+        rcv->th[i]->initial_acq = 0;
+        rcv->th[i]->reacq = 0;
+        rcv->th[i]->drained = 0;
+    }
+    if (rcv->offline) schedule_offline_acq(rcv);
     
     gtime_t start_time = utc2gpst(timeget()); // GPST
     
@@ -1502,6 +1676,7 @@ void sdr_rcv_stop(sdr_rcv_t *rcv)
 {
     gtime_t stop_time = utc2gpst(timeget()); // GPST
     
+    if (rcv->offline) rcv->state = 0;
     for (int i = 0; i < rcv->nch; i++) {
         ch_th_stop(rcv->th[i]);
     }
