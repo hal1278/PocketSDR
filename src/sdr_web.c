@@ -60,6 +60,7 @@
 #define FRM_PSD        1        // binary frame type: PSD
 #define FRM_CORR       2        // binary frame type: correlator snapshot
 #define FRM_CORR_HIST  3        // binary frame type: correlator history
+#define FRM_SPATIAL    4        // binary frame type: spatial heatmap
 
 #define TOPIC_RCV_STAT  1       // topic: receiver status
 #define TOPIC_CH_STAT   2       // topic: BB channel status
@@ -74,7 +75,8 @@
 #define TOPIC_PSD       11      // topic: PSD (binary)
 #define TOPIC_CORR      12      // topic: correlator snapshot (binary)
 #define TOPIC_CORR_HIST 13      // topic: correlator history (binary)
-#define N_TOPIC         13      // number of topics
+#define TOPIC_SPATIAL   14      // topic: spatial heatmap (binary)
+#define N_TOPIC         14      // number of topics
 
 #define N_OPT          20       // number of system options
 
@@ -108,6 +110,7 @@ typedef struct {                // topic subscription type
     int chno, opt, nfft;        // ch_stat channel/option and PSD FFT points
     double tave, tspan, width, min_lock; // topic parameters
     int log_pos;                // log lines sent (absolute count)
+    int last_seq;               // last spatial map sequence sent
     char sys[16];               // ch_stat system selection
     char sats[256];             // sat_stat satellite list
 } web_sub_t;
@@ -920,6 +923,8 @@ static void send_cfg(sdr_web_t *web, web_cli_t *cli)
     n += snprintf(buff + n, JSON_BUFF_SIZE - n, "\"sigs\":\"%s\",", esc);
     jsn_esc(esc, sizeof(esc), c->rfch);
     n += snprintf(buff + n, JSON_BUFF_SIZE - n, "\"rfch\":\"%s\",", esc);
+    jsn_esc(esc, sizeof(esc), c->geom_file);
+    n += snprintf(buff + n, JSON_BUFF_SIZE - n, "\"geom\":\"%s\",", esc);
     jsn_esc(esc, sizeof(esc), c->fftw);
     n += snprintf(buff + n, JSON_BUFF_SIZE - n, "\"fftw\":\"%s\",", esc);
     for (int i = m = 0; i < SDR_MAX_STR; i++) {
@@ -1017,6 +1022,7 @@ static int save_cfg(sdr_web_t *web)
     fprintf(fp, "fftw   = %s\n", c->fftw);
     fprintf(fp, "fast_acq = %d\n", c->fast_acq);
     fprintf(fp, "array_sep = %d\n", c->array_sep);
+    fprintf(fp, "geom = %s\n", c->geom_file);
     for (int i = 0; i < N_OPT; i++) {
         fprintf(fp, "%-6s = %.6g\n", opt_names[i], vals[i]);
     }
@@ -1058,6 +1064,8 @@ static int load_cfg(sdr_web_t *web)
         else if (!strcmp(key, "fftw"  )) snprintf(c->fftw, sizeof(c->fftw), "%s", val);
         else if (!strcmp(key, "fast_acq" )) c->fast_acq = atoi(val) != 0;
         else if (!strcmp(key, "array_sep")) c->array_sep = atoi(val) != 0;
+        else if (!strcmp(key, "geom")) snprintf(c->geom_file,
+            sizeof(c->geom_file), "%s", val);
         else if (!strcmp(key, "lpf")) {
             int n = parse_csv(val, vals, SDR_MAX_RFCH);
             for (int i = 0; i < n; i++) c->lpf_bw[i] = CLIP(vals[i], 0.0, 100.0);
@@ -1167,6 +1175,15 @@ static sdr_rcv_t *cfg_open(sdr_web_cfg_t *c)
         for (int i = 0; i < c->nant; i++) ena[i] = 1;
         sdr_rcv_array_ant_pos(rcv, (const double *)c->ant_pos, ena);
     }
+    else if (rcv && *c->geom_file) {
+        double pos[SDR_MAX_RFCH * 3] = {0};
+        int ena[SDR_MAX_RFCH] = {0};
+        int n = sdr_array_geom_load(c->geom_file, pos, SDR_MAX_RFCH);
+        for (int i = 0; i < n; i++) ena[i] = 1;
+        if (n < 2 || !sdr_rcv_array_ant_pos(rcv, pos, ena)) {
+            fprintf(stderr, "array geometry load error: %s\n", c->geom_file);
+        }
+    }
     return rcv;
 }
 
@@ -1265,6 +1282,31 @@ static void send_corr_hist(sdr_web_t *web, web_cli_t *cli, web_sub_t *sub)
     ws_send(cli, 0x2, web->bin_buff, 24 + n * 8);
 }
 
+// send the latest spatial map as a compact binary frame ----------------------
+static void send_spatial(sdr_web_t *web, web_cli_t *cli, web_sub_t *sub)
+{
+    sdr_spatial_map_t map;
+    if (!web->rcv || !sdr_spatial_get(web->rcv->spatial, &map) ||
+        map.seq == sub->last_seq) return;
+    uint8_t *p = web->bin_buff;
+    *p++ = FRM_SPATIAL;
+    *p++ = 1; // Bartlett
+    p = bin_u16(p, (uint16_t)map.ch);
+    p = bin_u32(p, (uint32_t)map.seq);
+    p = bin_f64(p, map.time);
+    p = bin_f32(p, (float)map.cn0);
+    p = bin_u16(p, (uint16_t)map.naz);
+    p = bin_u16(p, (uint16_t)map.nel);
+    p = bin_f32(p, (float)map.az0);
+    p = bin_f32(p, (float)map.el0);
+    p = bin_f32(p, (float)map.daz);
+    p = bin_f32(p, (float)map.del);
+    int n = map.naz * map.nel;
+    memcpy(p, map.power, sizeof(float) * n);
+    ws_send(cli, 0x2, web->bin_buff, 40 + sizeof(float) * n);
+    sub->last_seq = map.seq;
+}
+
 // send topic data -------------------------------------------------------------
 static void send_topic(sdr_web_t *web, web_cli_t *cli, int topic,
     web_sub_t *sub)
@@ -1283,6 +1325,7 @@ static void send_topic(sdr_web_t *web, web_cli_t *cli, int topic,
         case TOPIC_PSD      : send_psd      (web, cli, sub); break;
         case TOPIC_CORR     : send_corr     (web, cli, sub); break;
         case TOPIC_CORR_HIST: send_corr_hist(web, cli, sub); break;
+        case TOPIC_SPATIAL: send_spatial(web, cli, sub); break;
     }
 }
 
@@ -1291,7 +1334,8 @@ static int topic_id(const char *name)
 {
     static const char *names[] = {
         "", "rcv_stat", "ch_stat", "sat_stat", "pvt_sol", "rfch_stat", "hist",
-        "log", "array_stat", "opts", "cfg", "psd", "corr", "corr_hist"
+        "log", "array_stat", "opts", "cfg", "psd", "corr", "corr_hist",
+        "spatial"
     };
     for (int i = 1; i <= N_TOPIC; i++) {
         if (!strcmp(name, names[i])) return i;
@@ -1370,7 +1414,8 @@ static void proc_cmd(sdr_web_t *web, web_cli_t *cli, const char *msg)
         }
         web_sub_t sub;
         memset(&sub, 0, sizeof(sub));
-        sub.cyc = id >= TOPIC_PSD ? DEF_CYC_BIN : DEF_CYC_TEXT;
+        sub.cyc = id == TOPIC_SPATIAL ? 250 :
+            id >= TOPIC_PSD ? DEF_CYC_BIN : DEF_CYC_TEXT;
         sub.ch = 1;
         sub.rfch = id == TOPIC_PSD || id == TOPIC_HIST ? 1 : 0;
         sub.nfft = 2048;
@@ -1400,6 +1445,7 @@ static void proc_cmd(sdr_web_t *web, web_cli_t *cli, const char *msg)
         sub.ena = 1;
         sub.next = sdr_get_tick();
         sub.log_pos = cli->subs[id].log_pos; // resume, do not resend the ring
+        sub.last_seq = cli->subs[id].last_seq;
         cli->subs[id] = sub;
         if (id == TOPIC_CORR || id == TOPIC_CORR_HIST) {
             update_sel_ch(web, sub.ch, sub.width);
@@ -1418,6 +1464,46 @@ static void proc_cmd(sdr_web_t *web, web_cli_t *cli, const char *msg)
         update_sel_ch(web, (int)CLIP(ch, 0, SDR_MAX_NCH),
             CLIP(width, 1e-7, 1e-4));
         send_ack(cli, "sel_ch", 1, NULL);
+    } else if (!strcmp(cmd, "spatial_select")) {
+        double n = 0.0;
+        char alg[32] = "Bartlett";
+        jsn_num(msg, "ch", &n);
+        jsn_str(msg, "alg", alg, sizeof(alg));
+        int ch = (int)n, ok = 0;
+        sdr_rcv_t *rcv = web->rcv;
+        if (rcv && rcv->spatial && ch >= 0 && ch <= rcv->nch &&
+            (ch == 0 || (rcv->th[ch-1]->ch->rf_ch < rcv->nrfch &&
+            !strcmp(rcv->th[ch-1]->ch->sig, "L1CA")))) {
+            ok = sdr_spatial_select(rcv->spatial, ch, alg);
+        }
+        if (ok) {
+            for (int i = 0; i < MAX_WEB_CLI; i++) {
+                web->cli[i].subs[TOPIC_SPATIAL].last_seq = 0;
+            }
+        }
+        send_ack(cli, "spatial_select", ok,
+            ok ? NULL : "\"msg\":\"select a physical L1CA RF channel\"");
+    } else if (!strcmp(cmd, "spatial_config")) {
+        sdr_spatial_cfg_t cfg = {{72, 19, 0.0, 0.0, 5.0, 5.0},
+            21, 20, 10, -1.0, 1.0};
+        if (jsn_num(msg, "naz", &val)) cfg.grid.naz = (int)val;
+        if (jsn_num(msg, "nel", &val)) cfg.grid.nel = (int)val;
+        if (jsn_num(msg, "az0", &val)) cfg.grid.az0 = val;
+        if (jsn_num(msg, "el0", &val)) cfg.grid.el0 = val;
+        if (jsn_num(msg, "daz", &val)) cfg.grid.daz = val;
+        if (jsn_num(msg, "del", &val)) cfg.grid.del = val;
+        if (jsn_num(msg, "ndelay", &val)) cfg.ndelay = (int)val;
+        if (jsn_num(msg, "delay_min", &val)) cfg.delay_min = val;
+        if (jsn_num(msg, "delay_max", &val)) cfg.delay_max = val;
+        if (jsn_num(msg, "sample_step", &val)) cfg.sample_step = (int)val;
+        if (jsn_num(msg, "average_count", &val)) cfg.average_count = (int)val;
+        int ok = web->rcv && sdr_spatial_config(web->rcv->spatial, &cfg);
+        if (ok) {
+            for (int i = 0; i < MAX_WEB_CLI; i++) {
+                web->cli[i].subs[TOPIC_SPATIAL].last_seq = 0;
+            }
+        }
+        send_ack(cli, cmd, ok, NULL);
     } else if (!strcmp(cmd, "set_gain")) {
         double rfch = 1.0, gain = 0.0;
         jsn_num(msg, "rfch", &rfch);
@@ -1606,6 +1692,17 @@ static void proc_cmd(sdr_web_t *web, web_cli_t *cli, const char *msg)
         int ok = !strcmp(cmd, "array_save") ?
             sdr_rcv_array_save(web->rcv, file) :
             sdr_rcv_array_load(web->rcv, file);
+        send_ack(cli, cmd, ok, NULL);
+    } else if (!strcmp(cmd, "array_geom")) {
+        char file[1024] = "";
+        double pos[SDR_MAX_RFCH * 3] = {0};
+        int ena[SDR_MAX_RFCH] = {0};
+        jsn_str(msg, "file", file, sizeof(file));
+        int n = *file ? sdr_array_geom_load(file, pos, SDR_MAX_RFCH) : 0;
+        for (int i = 0; i < n; i++) ena[i] = 1;
+        int ok = n >= 2 && sdr_rcv_array_ant_pos(web->rcv, pos, ena);
+        if (ok) snprintf(web->cfg.geom_file,
+            sizeof(web->cfg.geom_file), "%s", file);
         send_ack(cli, cmd, ok, NULL);
     } else if (!strcmp(cmd, "setopt")) {
         char name[32] = "";

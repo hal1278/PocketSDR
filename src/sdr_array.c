@@ -483,6 +483,23 @@ static void steer_body(const double *rpy, double az, double el, double *e_body)
     matmul("TN", 3, 1, 3, 1.0, R, e_enu, 0.0, e_body);
 }
 
+// generate array response for a candidate sky direction ----------------------
+void sdr_array_steering(const sdr_array_t *array, double az, double el,
+    double freq, sdr_cpx_t *a)
+{
+    double e_body[3], lam = CLIGHT / freq;
+    steer_body(array->x, az, el, e_body);
+    for (int i = 0; i < array->nrfch; i++) {
+        double b[3], phi;
+        for (int j = 0; j < 3; j++) {
+            b[j] = array->ant_pos[i][j] - array->ant_pos[0][j];
+        }
+        phi = DPI * (dot(e_body, b, 3) + array->x[3+i]) / lam;
+        a[i][0] = array->ant_ena[i] ? (float)cos(phi) : 0.0f;
+        a[i][1] = array->ant_ena[i] ? (float)sin(phi) : 0.0f;
+    }
+}
+
 // build LUT for weight multiplication -----------------------------------------
 static void build_lut(sdr_arch_t *arch, int nrfch)
 {
@@ -518,22 +535,14 @@ void sdr_arch_set_beam(sdr_arch_t *arch, const sdr_rcv_t *rcv, double az,
         build_lut(arch, rcv->nrfch); // zero LUT
         return;
     }
-    double lam = CLIGHT / ARRAY_FREQ;
     double amp = scale * bit_gain(rcv, array->ant_ena) * ARRAY_W_SCALE;
-    double e_body[3], b_body[3];
-    
-    // beam steering vector in body frame
-    steer_body(array->x, az, el, e_body);
+    sdr_cpx_t a[SDR_MAX_RFCH];
+    sdr_array_steering(array, az, el, ARRAY_FREQ, a);
     
     for (int i = 0; i < rcv->nrfch; i++) {
         if (!is_l1_ch(rcv, i) || !array->ant_ena[i]) continue;
         
-        for (int j = 0; j < 3; j++) {
-            b_body[j] = array->ant_pos[i][j] - array->ant_pos[0][j];
-        }
-        double proj = dot(e_body, b_body, 3);
-        double phi = -DPI * (proj + array->x[3+i]) / lam;
-        double wr = amp * cos(phi), wi = amp * sin(phi);
+        double wr = amp * a[i][0], wi = -amp * a[i][1];
         
         arch->w[i*2  ] = (int16_t)floor(CLIP(wr, -32768.0, 32767.0) + 0.5);
         arch->w[i*2+1] = (int16_t)floor(CLIP(wi, -32768.0, 32767.0) + 0.5);
@@ -576,4 +585,3 @@ void sdr_arch_combine(const sdr_arch_t *arch, const sdr_rcv_t *rcv, int base)
         out[i] = SDR_CPX8(CLIP(I, -8, 7), CLIP(Q, -8, 7));
     }
 }
-

@@ -37,6 +37,18 @@ export function decodeFrame(buf) {
             P: new Float32Array(buf, 24, 2 * n)
         };
     }
+    else if (type == 4) { // spatial power map, azimuth varies fastest
+        const naz = dv.getUint16(20, true), nel = dv.getUint16(22, true);
+        if (buf.byteLength != 40 + 4 * naz * nel) return null;
+        return {
+            type: 'spatial', alg: dv.getUint8(1), ch: dv.getUint16(2, true),
+            seq: dv.getUint32(4, true), time: dv.getFloat64(8, true),
+            cn0: dv.getFloat32(16, true), naz, nel,
+            az0: dv.getFloat32(24, true), el0: dv.getFloat32(28, true),
+            daz: dv.getFloat32(32, true), del: dv.getFloat32(36, true),
+            power: new Float32Array(buf, 40, naz * nel)
+        };
+    }
     return null;
 }
 

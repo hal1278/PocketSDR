@@ -536,6 +536,8 @@ static void *ch_thread(void *arg)
             // update SDR receiver CH
             sdr_ch_update(ch, th->ix * SDR_CYC, th->rcv->buff[ch->rf_ch],
                 th->rcv->N * (int)(th->ix % MAX_BUFF));
+            sdr_spatial_tick(th->rcv->spatial, th->rcv, ch, th->ix,
+                th->rcv->N * (int)(th->ix % MAX_BUFF));
             
             // update navigation data
             if (ch->nav->stat) {
@@ -735,6 +737,7 @@ sdr_rcv_t *sdr_rcv_new(const char **sigs, const int *prns, int n, int fmt,
     rcv->narch = narch;
     if (rcv->nrfch >= 2) {
         rcv->array = sdr_array_new(rcv->nrfch, 0);
+        rcv->spatial = sdr_spatial_new();
         for (int m = 0; m < narch; m++) {
             rcv->arch[m].scale = 1.0 / rcv->nrfch;
             sdr_arch_set_beam(rcv->arch + m, rcv, 0.0, PI / 2,
@@ -770,6 +773,7 @@ void sdr_rcv_free(sdr_rcv_t *rcv)
         sdr_arch_free(rcv->arch + m);
     }
     rcv->narch = 0;
+    sdr_spatial_free(rcv->spatial);
     if (rcv->array) sdr_array_free(rcv->array);
     sdr_free(rcv);
 }

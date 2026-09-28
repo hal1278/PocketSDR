@@ -40,7 +40,7 @@
 #include <windows.h>
 #else
 #include <pthread.h>
-#include <libusb-1.0/libusb.h>
+#include <libusb.h>
 #endif // WIN32
 
 #ifdef __cplusplus
@@ -128,6 +128,7 @@ typedef struct {int32_t I, Q;} sdr_cpx64_t; // 64(32+32) bits complex type
 typedef float sdr_cpx_t[2];      // single precision complex type
 typedef struct sdr_lpf_tag sdr_lpf_t; // LPF type
 typedef struct sdr_web_tag sdr_web_t; // Web UI server type
+typedef struct sdr_spatial_tag sdr_spatial_t; // spatial processor type
 
 #ifdef WIN32
 typedef HANDLE sdr_thread_t;     // thread type
@@ -337,6 +338,44 @@ typedef struct {                // SDR antenna array type
     double rms;                 // calibration RMS (m)
 } sdr_array_t;
 
+#define SDR_SPATIAL_NAZ 72
+#define SDR_SPATIAL_NEL 19
+#define SDR_SPATIAL_NDELAY 41
+#define SDR_SPATIAL_CAP_CORR 1
+
+typedef struct {                // common-reference antenna/delay correlations
+    double time, freq, cn0;
+    int ch, nant, ndelay;
+    char sat[16], sig[16];
+    double delay[SDR_SPATIAL_NDELAY]; // code delay in chips
+    sdr_cpx_t corr[SDR_MAX_RFCH][SDR_SPATIAL_NDELAY];
+} sdr_spatial_snapshot_t;
+
+typedef struct {                // azimuth/elevation scan grid in degrees
+    int naz, nel;
+    double az0, el0, daz, del;
+} sdr_spatial_grid_t;
+
+typedef struct {                // spatial scan and update configuration
+    sdr_spatial_grid_t grid;
+    int ndelay, sample_step, average_count;
+    double delay_min, delay_max;
+} sdr_spatial_cfg_t;
+
+typedef struct {                // published spatial map
+    double time, cn0;
+    int ch, seq, nsnap, naz, nel;
+    double az0, el0, daz, del;
+    float power[SDR_SPATIAL_NAZ * SDR_SPATIAL_NEL];
+} sdr_spatial_map_t;
+
+typedef struct {                // spatial algorithm dispatch entry
+    const char *name;
+    unsigned capabilities;
+    int (*process)(const sdr_spatial_snapshot_t *, const sdr_array_t *,
+        const sdr_spatial_grid_t *, float *);
+} sdr_spatial_alg_t;
+
 #define SDR_WEB_MAX_SIG 64      // max signal entries in Web UI configuration
 #define SDR_WEB_N_LOG  10       // number of receiver log types
 
@@ -368,6 +407,7 @@ typedef struct {                // Web UI receiver configuration type
     char fftw[1024];            // FFTW wisdom file path
     int nant;                   // number of array antenna elements
     double ant_pos[SDR_MAX_RFCH][3]; // element positions in body-frame (m)
+    char geom_file[1024];       // antenna geometry file
 } sdr_web_cfg_t;
 
 typedef struct sdr_rcv_tag {    // SDR receiver type
@@ -386,6 +426,7 @@ typedef struct sdr_rcv_tag {    // SDR receiver type
     sdr_buff_t *buff[SDR_MAX_BUFF]; // IF data buffers (RF + array)
     sdr_ch_th_t *th[SDR_MAX_NCH]; // SDR receiver channel threads
     sdr_array_t *array;         // antenna array state (NULL if narch == 0)
+    sdr_spatial_t *spatial;     // selected-signal spatial processor
     sdr_pvt_t *pvt;             // SDR PVT
     sdr_stats_t stats;          // IF data statistics
     int str_type[SDR_MAX_STR];  // output stream types (SDR_STR_???)
@@ -587,6 +628,8 @@ int sdr_array_save(sdr_array_t *array, const char *file);
 int sdr_array_load(sdr_array_t *array, const char *file);
 int sdr_array_geom_save(const char *file, const double *ant_pos, int n);
 int sdr_array_geom_load(const char *file, double *ant_pos, int max_ant);
+void sdr_array_steering(const sdr_array_t *array, double az, double el,
+    double freq, sdr_cpx_t *a);
 void sdr_arch_free(sdr_arch_t *arch);
 void sdr_arch_set_beam(sdr_arch_t *arch, const sdr_rcv_t *rcv, double az,
     double el, double scale);
@@ -648,6 +691,21 @@ int sdr_rcv_set_gain(sdr_rcv_t *rcv, int ch, int gain);
 int sdr_rcv_get_filt(sdr_rcv_t *rcv, int ch, double *bw, double *freq,
     int *order);
 int sdr_rcv_set_filt(sdr_rcv_t *rcv, int ch, double bw, double freq, int order);
+
+// sdr_spatial.c
+const sdr_spatial_alg_t *sdr_spatial_algorithm(const char *name);
+int sdr_spatial_bartlett(const sdr_spatial_snapshot_t *snap,
+    const sdr_array_t *array, const sdr_spatial_grid_t *grid, float *power);
+sdr_spatial_t *sdr_spatial_new(void);
+void sdr_spatial_free(sdr_spatial_t *spatial);
+int sdr_spatial_select(sdr_spatial_t *spatial, int ch, const char *alg);
+int sdr_spatial_config(sdr_spatial_t *spatial,
+    const sdr_spatial_cfg_t *cfg);
+void sdr_spatial_tick(sdr_spatial_t *spatial, sdr_rcv_t *rcv,
+    const sdr_ch_t *ch, int64_t cycle, int ix);
+int sdr_spatial_get(sdr_spatial_t *spatial, sdr_spatial_map_t *map);
+int sdr_spatial_snapshot(const sdr_rcv_t *rcv, const sdr_ch_t *ch, int ix,
+    sdr_spatial_snapshot_t *snap);
 
 // sdr_web.c
 sdr_web_t *sdr_web_start(sdr_rcv_t *rcv, const char *addr, int port,

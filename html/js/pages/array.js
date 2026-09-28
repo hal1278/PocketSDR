@@ -17,6 +17,9 @@ export class ArrayPage {
             `<button id="ar-clear">Clear</button>` +
             `<button id="ar-load">Load</button>` +
             `<button id="ar-save">Save</button>` +
+            `<label>Geometry file</label><input id="ar-geom" ` +
+            `placeholder="array.geom">` +
+            `<button id="ar-geom-load">Load geometry</button>` +
             `</div>` +
             `<div class="ar-body" id="ar-body">` +
             `<div class="ar-frame"><div class="ar-title">RF CH DELAY</div>` +
@@ -45,7 +48,17 @@ export class ArrayPage {
         this.el.querySelector('#ar-save').onclick = () => {
             this.app.ws.send({cmd: 'array_save'});
         };
+        this.el.querySelector('#ar-geom-load').onclick = () => {
+            this.app.ws.send({cmd: 'array_geom',
+                file: this.el.querySelector('#ar-geom').value});
+        };
         app.ws.on('array_stat', (msg) => this.update(msg));
+        app.ws.on('cfg', (msg) => {
+            if (this.active && document.activeElement !=
+                this.el.querySelector('#ar-geom')) {
+                this.el.querySelector('#ar-geom').value = msg.geom || '';
+            }
+        });
         app.ws.on('ack', (msg) => { // refresh promptly after a command
             if (this.active && msg.cmd && msg.cmd.startsWith('array_')) {
                 this.app.ws.get('array_stat');
@@ -111,6 +124,7 @@ export class ArrayPage {
     show() {
         this.active = true;
         this.app.ws.sub('array_stat', {cyc: 500});
+        this.app.ws.get('cfg');
     }
     hide() {
         this.active = false;

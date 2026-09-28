@@ -110,6 +110,23 @@ button:disabled {
 }
 
 /* tab bar -------------------------------------------------------------------*/
+.sp-body {
+    padding: 8px;
+    height: calc(100% - 33px);
+    display: flex;
+    flex-direction: column;
+}
+.sp-body canvas {
+    width: 100%;
+    height: calc(100% - 22px);
+    min-height: 220px;
+}
+.sp-scale {
+    padding: 5px 44px;
+    color: var(--fg);
+}
+
+/* tab bar -------------------------------------------------------------------*/
 #tabbar {
     display: flex;
     background: var(--bg1);

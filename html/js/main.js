@@ -8,6 +8,7 @@ import {CorrPage} from './pages/corr.js';
 import {SatsPage} from './pages/sats.js';
 import {SolPage} from './pages/sol.js';
 import {ArrayPage} from './pages/array.js';
+import {SpatialPage} from './pages/spatial.js';
 import {InpPage} from './pages/inp.js';
 import {OutPage} from './pages/out.js';
 import {SigPage} from './pages/sig.js';
@@ -68,6 +69,7 @@ const pages = [
     {name: 'Satellites', page: new SatsPage(app)},
     {name: 'Solution', page: new SolPage(app)},
     {name: 'Array', page: new ArrayPage(app)},
+    {name: 'Spatial', page: new SpatialPage(app)},
     {name: 'Input', page: new InpPage(app), notab: true},
     {name: 'Output', page: new OutPage(app), notab: true},
     {name: 'Signal', page: new SigPage(app), notab: true},
@@ -157,13 +159,14 @@ ws.on('open', () => {
 ws.connect();
 document.getElementById('btn-start').onclick = () => ws.send({cmd: 'start'});
 document.getElementById('btn-stop').onclick = () => ws.send({cmd: 'stop'});
-document.getElementById('btn-inp').onclick = () => selPage(7);
-document.getElementById('btn-out').onclick = () => selPage(8);
-document.getElementById('btn-sig').onclick = () => selPage(9);
-document.getElementById('btn-sys').onclick = () => selPage(10);
-document.getElementById('btn-help').onclick = () => selPage(11);
+document.getElementById('btn-inp').onclick = () => selPage(8);
+document.getElementById('btn-out').onclick = () => selPage(9);
+document.getElementById('btn-sig').onclick = () => selPage(10);
+document.getElementById('btn-sys').onclick = () => selPage(11);
+document.getElementById('btn-help').onclick = () => selPage(12);
 setConn(false);
 
 const hash = ['receiver', 'rfch', 'bbch', 'corr', 'sats', 'sol', 'array',
-    'inp', 'out', 'sig', 'opts', 'help', 'log'].indexOf(location.hash.slice(1));
+    'spatial', 'inp', 'out', 'sig', 'opts', 'help', 'log'].indexOf(
+        location.hash.slice(1));
 selPage(hash < 0 ? 0 : hash);

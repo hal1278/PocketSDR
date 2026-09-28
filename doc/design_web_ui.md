@@ -211,6 +211,7 @@ they are already the de-facto GUI API).
 | `psd`       | `sdr_rcv_rfch_psd()` (rfch 0: all RF CHs)    | binary 1 | 100 ms      |
 | `corr`      | `sdr_rcv_corr_stat()`                        | binary 2 | 100 ms      |
 | `corr_hist` | `sdr_rcv_corr_hist()`                        | binary 3 | 100 ms      |
+| `spatial`   | `sdr_spatial_get()`                         | binary 4 | 250 ms      |
 
 Notes:
 
@@ -255,6 +256,9 @@ Notes:
 | `array_beam`| `rfch`, `az`, `el` (deg) | `sdr_rcv_array_set_beam()` |
 | `array_save`| `file` (default array_calib.txt) | `sdr_rcv_array_save()` |
 | `array_load`| `file` (default array_calib.txt) | `sdr_rcv_array_load()` |
+| `array_geom`| `file` (geometry path) | `sdr_array_geom_load()` and `sdr_rcv_array_ant_pos()` |
+| `spatial_select` | `ch`, `alg` (`Bartlett`) | select a physical L1 C/A reference channel |
+| `spatial_config` | `naz`, `nel`, `az0`, `el0`, `daz`, `del`, `ndelay`, `delay_min`, `delay_max`, `sample_step`, `average_count` | configure spatial grid and cadence; delays in chips and sampling step in 1 ms cycles |
 
 Receiver lifecycle commands (enabled when the AP passes its configuration via
 `sdr_web_set_cfg()`; the flat values mirror the `sdr_web_cfg_t` fields, with
@@ -432,6 +436,29 @@ Type 3 — P-correlator history (topic `corr_hist`):
 | 24     | f32[2n] | P history, I/Q interleaved, oldest first          |
 
 Size 24 + 8n; tspan = 1 s at T = 1 ms -> 1000 points -> 8 KB.
+
+Type 4 — spatial heatmap (topic `spatial`):
+
+| offset | type | field |
+|--------|------|-------|
+| 0 | u8 | frame type = 4 |
+| 1 | u8 | algorithm ID (1: Bartlett) |
+| 2 | u16 | selected BB CH |
+| 4 | u32 | map sequence |
+| 8 | f64 | receiver time (s) |
+| 16 | f32 | selected signal C/N0 (dB-Hz) |
+| 20 | u16 | azimuth cell count |
+| 22 | u16 | elevation cell count |
+| 24 | f32 | first azimuth (deg) |
+| 28 | f32 | first elevation (deg) |
+| 32 | f32 | azimuth step (deg) |
+| 36 | f32 | elevation step (deg) |
+| 40 | f32[naz * nel] | linear power, elevation rows with azimuth varying fastest |
+
+The default map is 72 by 19 cells, 5° steps, and approximately 5 updates/s.
+The page displays each cell relative to the current map maximum over a fixed
+25 dB color range. The array geometry file path is stored as `geom` in the
+Web UI settings and reloaded when the receiver starts.
 
 ## Web UI App (html/)
 
