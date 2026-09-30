@@ -2,6 +2,7 @@
 #  makefile for Pocket SDR GNSS-SDR library (libsdr.so, libsdr.a)
 #
 
+PKG_CONFIG ?= pkg-config
 SRC = ../../src
 USE_SOAPY ?= 1
 USE_FFTW ?= 0
@@ -17,6 +18,14 @@ ifeq ($(USE_FFTW),1)
 else
     INCLUDE += -I../pocketfft
     LIBS += ./libpocketfft.a
+endif
+
+EXT_LIBS := libusb-1.0
+ifeq ($(USE_FFTW),1)
+    EXT_LIBS += fftw3f
+endif
+ifeq ($(USE_SOAPY),1)
+    EXT_LIBS += SoapySDR
 endif
 
 ifeq ($(OS),Windows_NT)
@@ -61,11 +70,13 @@ else
     else ifeq ($(USE_AVX2),1)
         OPTIONS += -DAVX2 -mavx2 -mfma
     endif
-    LDLIBS = $(LIBS) -lpthread -lusb-1.0 -lm -lpthread
+    EXT_CPPFLAGS ?= $(shell $(PKG_CONFIG) --cflags $(EXT_LIBS))
+    EXT_LDLIBS ?= $(shell $(PKG_CONFIG) --libs $(EXT_LIBS))
+    LDLIBS = $(LIBS) -lpthread $(EXT_LDLIBS) -lm -lpthread
+    CPPFLAGS += $(EXT_CPPFLAGS)
     
     ifeq ($(USE_SOAPY),1)
         OPTIONS += -DSOAPYSDR
-        LDLIBS += -lSoapySDR
     endif
 endif
 
@@ -85,39 +96,39 @@ libsdr.so: $(OBJ)
 libsdr.a: $(OBJ)
 	$(AR) r $@ $(OBJ)
 sdr_cmn.o : $(SRC)/sdr_cmn.c
-	$(CC) -c $(CFLAGS) $<
+	$(CC) -c $(CPPFLAGS) $(CFLAGS) $<
 sdr_func.o : $(SRC)/sdr_func.c
-	$(CC) -c $(CFLAGS) $<
+	$(CC) -c $(CPPFLAGS) $(CFLAGS) $<
 sdr_code.o : $(SRC)/sdr_code.c
-	$(CC) -c $(CFLAGS) $<
+	$(CC) -c $(CPPFLAGS) $(CFLAGS) $<
 sdr_code_gal.o : $(SRC)/sdr_code_gal.c
-	$(CC) -c $(CFLAGS) $<
+	$(CC) -c $(CPPFLAGS) $(CFLAGS) $<
 sdr_ch.o   : $(SRC)/sdr_ch.c
-	$(CC) -c $(CFLAGS) $<
+	$(CC) -c $(CPPFLAGS) $(CFLAGS) $<
 sdr_nav.o  : $(SRC)/sdr_nav.c
-	$(CC) -c $(CFLAGS) $<
+	$(CC) -c $(CPPFLAGS) $(CFLAGS) $<
 sdr_pvt.o  : $(SRC)/sdr_pvt.c
-	$(CC) -c $(CFLAGS) $<
+	$(CC) -c $(CPPFLAGS) $(CFLAGS) $<
 sdr_rcv.o  : $(SRC)/sdr_rcv.c
-	$(CC) -c $(CFLAGS) $<
+	$(CC) -c $(CPPFLAGS) $(CFLAGS) $<
 sdr_fec.o  : $(SRC)/sdr_fec.c
-	$(CC) -c $(CFLAGS) $<
+	$(CC) -c $(CPPFLAGS) $(CFLAGS) $<
 sdr_ldpc.o : $(SRC)/sdr_ldpc.c
-	$(CC) -c $(CFLAGS) $<
+	$(CC) -c $(CPPFLAGS) $(CFLAGS) $<
 sdr_nb_ldpc.o : $(SRC)/sdr_nb_ldpc.c
-	$(CC) -c $(CFLAGS) $<
+	$(CC) -c $(CPPFLAGS) $(CFLAGS) $<
 sdr_usb.o : $(SRC)/sdr_usb.c
-	$(CX) -c $(CFLAGS) $<
+	$(CX) -c $(CPPFLAGS) $(CFLAGS) $<
 sdr_dev.o : $(SRC)/sdr_dev.c
-	$(CX) -c $(CFLAGS) $<
+	$(CX) -c $(CPPFLAGS) $(CFLAGS) $<
 sdr_conf.o : $(SRC)/sdr_conf.c
-	$(CC) -c $(CFLAGS) $<
+	$(CC) -c $(CPPFLAGS) $(CFLAGS) $<
 sdr_sdev.o : $(SRC)/sdr_sdev.c
-	$(CC) -c $(CFLAGS) $<
+	$(CC) -c $(CPPFLAGS) $(CFLAGS) $<
 sdr_array.o : $(SRC)/sdr_array.c
-	$(CC) -c $(CFLAGS) $<
+	$(CC) -c $(CPPFLAGS) $(CFLAGS) $<
 sdr_web.o : $(SRC)/sdr_web.c
-	$(CC) -c $(CFLAGS) $<
+	$(CC) -c $(CPPFLAGS) $(CFLAGS) $<
 
 sdr_cmn.o  : $(SRC)/pocket_sdr.h
 sdr_func.o : $(SRC)/pocket_sdr.h

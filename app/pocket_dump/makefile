@@ -43,13 +43,16 @@ else
     CC = g++
     INCLUDE = -I$(SRC) -I$(LIB)/RTKLIB/src
     OPTIONS =
-    LDLIBS = $(LIB)/linux/libsdr.a $(LIB)/linux/librtk.a -lusb-1.0 -lpthread
+    LDLIBS = $(LIB)/linux/libsdr.a $(LIB)/linux/librtk.a \
+             $(shell pkg-config --libs libusb-1.0) -lpthread
+    CPPFLAGS += $(shell pkg-config --cflags libusb-1.0)
     ifeq ($(USE_SOAPY),1)
         LDLIBS += -lSoapySDR
     endif
-    
+
     ifeq ($(USE_FFTW),1)
-        LDLIBS += -lfftw3f
+        LDLIBS += $(shell pkg-config --libs fftw3f)
+        CPPFLAGS += $(shell pkg-config --cflags fftw3f)
     else
         LDLIBS += $(LIB)/linux/libpocketfft.a
     endif

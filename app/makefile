@@ -1,33 +1,33 @@
 all:
-	make -C pocket_scan
-	make -C pocket_conf
-	make -C pocket_dump
-	make -C pocket_acq
-	make -C pocket_trk
-	make -C pocket_snap
-	make -C pocket_calib
-	make -C pocket_web
-	make -C convbin
-	make -C str2str
+	$(MAKE) -C pocket_scan
+	$(MAKE) -C pocket_conf
+	$(MAKE) -C pocket_dump
+	$(MAKE) -C pocket_acq
+	$(MAKE) -C pocket_trk
+	$(MAKE) -C pocket_snap
+	$(MAKE) -C pocket_calib
+	$(MAKE) -C pocket_web
+	$(MAKE) -C convbin
+	$(MAKE) -C str2str
 clean:
-	make -C pocket_scan clean
-	make -C pocket_conf clean
-	make -C pocket_dump clean
-	make -C pocket_acq clean
-	make -C pocket_trk clean
-	make -C pocket_snap clean
-	make -C pocket_calib clean
-	make -C pocket_web clean
-	make -C convbin clean
-	make -C str2str clean
+	$(MAKE) -C pocket_scan clean
+	$(MAKE) -C pocket_conf clean
+	$(MAKE) -C pocket_dump clean
+	$(MAKE) -C pocket_acq clean
+	$(MAKE) -C pocket_trk clean
+	$(MAKE) -C pocket_snap clean
+	$(MAKE) -C pocket_calib clean
+	$(MAKE) -C pocket_web clean
+	$(MAKE) -C convbin clean
+	$(MAKE) -C str2str clean
 install:
-	make -C pocket_scan install
-	make -C pocket_conf install
-	make -C pocket_dump install
-	make -C pocket_acq install
-	make -C pocket_trk install
-	make -C pocket_snap install
-	make -C pocket_calib install
-	make -C pocket_web install
-	make -C convbin install
-	make -C str2str install
+	$(MAKE) -C pocket_scan install
+	$(MAKE) -C pocket_conf install
+	$(MAKE) -C pocket_dump install
+	$(MAKE) -C pocket_acq install
+	$(MAKE) -C pocket_trk install
+	$(MAKE) -C pocket_snap install
+	$(MAKE) -C pocket_calib install
+	$(MAKE) -C pocket_web install
+	$(MAKE) -C convbin install
+	$(MAKE) -C str2str install

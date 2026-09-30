@@ -20,7 +20,8 @@ else
     CC = g++
     INCLUDE =
     OPTIONS =
-    LDLIBS = -lusb-1.0
+    LDLIBS = $(shell pkg-config --libs libusb-1.0)
+    CPPFLAGS += $(shell pkg-config --cflags libusb-1.0)
 endif
 
 WARNOPT = -Wall -Wextra
@@ -38,4 +39,3 @@ clean:
 
 install:
 	cp $(TARGET) $(BIN)
-

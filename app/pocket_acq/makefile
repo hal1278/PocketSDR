@@ -30,9 +30,12 @@ else ifeq ($(shell uname -sm),Darwin arm64)
     OPTIONS = -I/opt/homebrew/include
 else
     CC = g++
-    LDLIBS = $(LIB)/linux/libsdr.a $(LIB)/linux/librtk.a $(LIBFFT) -lpthread -lm
+    LDLIBS = $(LIB)/linux/libsdr.a $(LIB)/linux/librtk.a \
+             -lpthread -lm $(shell pkg-config --libs libusb-1.0)
+    CPPFLAGS += $(shell pkg-config --cflags libusb-1.0)
     ifeq ($(USE_FFTW),1)
-        LDLIBS += -lfftw3f
+        LDLIBS += $(shell pkg-config --libs fftw3f)
+        CPPFLAGS += $(shell pkg-config --cflags fftw3f)
     else
         LDLIBS += $(LIB)/linux/libpocketfft.a
     endif

@@ -20,7 +20,7 @@ ifeq ($(OS),Windows_NT)
         INCLUDE += -I$(LIB)/SoapySDR/include
         LDLIBS += -L$(LIB)/SoapySDR/lib -Wl,-Bdynamic -lSoapySDR -Wl,-Bstatic
     endif
-    
+
     ifeq ($(USE_FFTW),1)
         LDLIBS += -lfftw3f
     else
@@ -42,13 +42,16 @@ else ifeq ($(shell uname -sm),Darwin arm64)
     endif
 else
     CC = g++
-    LDLIBS = $(LIB)/linux/libsdr.a $(LIB)/linux/librtk.a -lpthread -lm -lusb-1.0
+    LDLIBS = $(LIB)/linux/libsdr.a $(LIB)/linux/librtk.a \
+             -lpthread -lm $(shell pkg-config --libs libusb-1.0)
+    CPPFLAGS += $(shell pkg-config --cflags libusb-1.0)
     ifeq ($(USE_SOAPY),1)
-        LDLIBS += -lSoapySDR
+        LDLIBS += $(shell pkg-config --libs SoapySDR)
+        CPPFLAGS += $(shell pkg-config --cflags SoapySDR)
     endif
-    
     ifeq ($(USE_FFTW),1)
-        LDLIBS += -lfftw3f
+        LDLIBS += $(shell pkg-config --libs fftw3f)
+        CPPFLAGS += $(shell pkg-config --cflags fftw3f)
     else
         LDLIBS += $(LIB)/linux/libpocketfft.a
     endif

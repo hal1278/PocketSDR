@@ -83,6 +83,7 @@ else ifeq ($(UNAME_S),Darwin)
 else
     LDFLAGS += -Wl,--gc-sections
     SYS_LIBS += -lm -lpthread
+    INCLUDE += $(shell pkg-config --cflags libusb-1.0)
     ifeq ($(UNAME_M),aarch64)
         OPTIONS += -DNEON -mcpu=native
     else ifeq ($(USE_AVX2),1)
