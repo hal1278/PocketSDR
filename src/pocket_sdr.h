@@ -117,6 +117,16 @@ extern "C" {
 #define SDR_CALIB_BIAS 1        // calib mode: estimate bias only (rpy=0 fixed)
 #define SDR_CALIB_RPY  2        // calib mode: estimate rpy only (bias fixed)
 
+#define SDR_CALIB_ALG_CONTINUOUS     0
+#define SDR_CALIB_ALG_STATIC         1
+#define SDR_CALIB_ALG_STATIC_DYNAMIC 2
+
+#define SDR_CALIB_SRC_NONE       0
+#define SDR_CALIB_SRC_CONTINUOUS 1
+#define SDR_CALIB_SRC_STATIC     2
+#define SDR_CALIB_SRC_LOADED     3
+#define SDR_CALIB_SRC_EXTERNAL   4
+
 #define SDR_CPX8(re, im) (sdr_cpx8_t)(((int8_t)(im)<<4)|(((int8_t)((re)<<4)>>4)&0xF))
 #define SDR_CPX8_I(x)  ((int8_t)((x)<<4)>>4)
 #define SDR_CPX8_Q(x)  ((int8_t)((x)<<0)>>4)
@@ -325,6 +335,8 @@ typedef struct {                // SDR array channel type
     sdr_cpx64_t LUT[SDR_MAX_RFCH][256]; // LUT: cpx8 -> cpx64
 } sdr_arch_t;
 
+typedef struct sdr_calib_static_tag sdr_calib_static_t;
+
 typedef struct {                // SDR antenna array type
     int calib_run;              // calibration state
     int calib_mode;             // calibration mode (SDR_CALIB_???)
@@ -336,7 +348,19 @@ typedef struct {                // SDR antenna array type
     double P[(3+SDR_MAX_RFCH)*(3+SDR_MAX_RFCH)]; // EKF covariance
     int nep;                    // calibration epoch count
     double rms;                 // calibration RMS (m)
+    int calib_alg;              // calibration algorithm
+    int calib_valid;            // accepted state in x
+    int calib_source;           // calibration provenance
+    sdr_calib_static_t *static_cal; // private static calibration context
 } sdr_array_t;
+
+typedef struct {                // SDR array calibration status snapshot
+    int run, mode, alg, valid, source, nep;
+    double rms;
+    int static_total_epochs, static_window_epochs, static_meas, static_sats;
+    double static_span, static_last_rms;
+    int static_last_rms_valid;
+} sdr_array_status_t;
 
 #define SDR_SPATIAL_NAZ 72
 #define SDR_SPATIAL_NEL 19
@@ -425,7 +449,7 @@ typedef struct sdr_rcv_tag {    // SDR receiver type
     sdr_arch_t arch[SDR_MAX_ARCH]; // per-array-CH beam state (relative index)
     sdr_buff_t *buff[SDR_MAX_BUFF]; // IF data buffers (RF + array)
     sdr_ch_th_t *th[SDR_MAX_NCH]; // SDR receiver channel threads
-    sdr_array_t *array;         // antenna array state (NULL if narch == 0)
+    sdr_array_t *array;         // antenna array state (NULL if nrfch < 2)
     sdr_spatial_t *spatial;     // selected-signal spatial processor
     sdr_pvt_t *pvt;             // SDR PVT
     sdr_stats_t stats;          // IF data statistics
@@ -619,9 +643,11 @@ int sdr_array_ant_pos(sdr_array_t *array, const double *ant_pos,
     const int *ant_ena);
 int sdr_array_run(sdr_array_t *array, int run);
 int sdr_array_set_mode(sdr_array_t *array, int mode);
+int sdr_array_set_alg(sdr_array_t *array, int alg);
 int sdr_array_set(sdr_array_t *array, const double *rpy, const double *bias);
 int sdr_array_stat(sdr_array_t *array, double *rpy, double *bias, double *rms,
     int *nep);
+int sdr_array_get_status(const sdr_array_t *array, sdr_array_status_t *status);
 void sdr_array_calib(sdr_array_t *array, const obsd_t *obs, int nobs,
     const nav_t *nav, const double *rr);
 int sdr_array_save(sdr_array_t *array, const char *file);
@@ -641,8 +667,10 @@ int sdr_rcv_array_ant_pos(sdr_rcv_t *rcv, const double *ant_pos,
     const int *ant_ena);
 int sdr_rcv_array_run(sdr_rcv_t *rcv, int run);
 int sdr_rcv_array_set_mode(sdr_rcv_t *rcv, int mode);
+int sdr_rcv_array_set_alg(sdr_rcv_t *rcv, int alg);
 int sdr_rcv_array_stat(sdr_rcv_t *rcv, double *rpy, double *bias, double *rms,
     int *nep);
+int sdr_rcv_array_get_status(sdr_rcv_t *rcv, sdr_array_status_t *status);
 int sdr_rcv_array_set_beam(sdr_rcv_t *rcv, int ach, double az, double el);
 int sdr_rcv_array_get_beam(sdr_rcv_t *rcv, int ach, double *az, double *el);
 int sdr_rcv_array_save(sdr_rcv_t *rcv, const char *file);

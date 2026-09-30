@@ -196,6 +196,7 @@ void sdr_spatial_tick(sdr_spatial_t *sp, sdr_rcv_t *rcv,
     sdr_array_t array;
     sdr_mutex_lock(&rcv->mtx);
     array = *rcv->array;
+    array.static_cal = NULL;
     sdr_mutex_unlock(&rcv->mtx);
     if (sp->alg->process(&snap, &array, &sp->cfg.grid, sp->work)) {
         int n = sp->cfg.grid.naz * sp->cfg.grid.nel * snap.ndelay;

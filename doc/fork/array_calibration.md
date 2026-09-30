@@ -338,7 +338,7 @@ int calib_run;       /* estimator is currently consuming observations */
 int calib_mode;      /* SDR_CALIB_BOTH / BIAS / RPY */
 int calib_alg;       /* CONTINUOUS / STATIC / ... */
 int calib_valid;     /* x[] contains an accepted calibrated state */
-int calib_source;    /* NONE / CONTINUOUS / STATIC / LOADED */
+int calib_source;    /* NONE / CONTINUOUS / STATIC / LOADED / EXTERNAL */
 ```
 
 This supports the following externally meaningful states:
@@ -361,7 +361,15 @@ STATIC complete:
 
 loaded calibration:
     run=0, valid=1, source=LOADED
+
+direct sdr_array_set() state:
+    valid=1, source=EXTERNAL
 ```
+
+`LOADED` applies only to a successful `sdr_array_load()` call. A failed
+`CONTINUOUS` initialization or EKF fallback may leave modified values in
+`x[]`; it must clear validity and provenance without changing the existing
+numerical path.
 
 The existing `nep` field may retain its current meaning for
 `CONTINUOUS`. Static collection statistics should be represented separately
@@ -399,6 +407,9 @@ sdr_calib_static_t *static_cal;
 
 The context is created/freed with the array object and reset when a new static
 calibration run begins.
+
+The Spatial path must clear the private pointer in its by-value snapshot and
+must never own or free the calibration context.
 
 Conceptually it stores:
 
@@ -553,6 +564,11 @@ A static solve may be attempted after:
 Full rank is a precondition for attempting/accepting a solution, but it is not
 sufficient to declare calibration valid.
 
+Build a Jacobian containing only active physical states, normalize its
+parameter columns, and use a small-matrix rank/conditioning method that needs
+no new LAPACK or BLAS dependency. Solve the same scaled system and unscale
+the update. The `CONTINUOUS` solver arithmetic remains unchanged.
+
 The implementation should retain room for a stronger conditioning or LOS-
 diversity metric once actual replay behavior is measured.
 
@@ -659,6 +675,10 @@ Control behavior should be explicit:
 | Load | load accepted state, not running | same; loaded state is independent of selected algorithm |
 
 A failed static candidate must not survive a Stop as a valid state.
+
+For `STATIC` with `RPY`, Start requires an accepted bias state. Copy those
+biases into the private context before resetting the estimator state and use
+that seed throughout the solve.
 
 ## 25. Geometry changes
 

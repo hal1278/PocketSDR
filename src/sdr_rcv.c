@@ -1619,6 +1619,18 @@ int sdr_rcv_array_set_mode(sdr_rcv_t *rcv, int mode)
     return ret;
 }
 
+// set receiver array calibration algorithm ------------------------------------
+int sdr_rcv_array_set_alg(sdr_rcv_t *rcv, int alg)
+{
+    sdr_array_t *array = rcv ? rcv->array : NULL;
+    if (!array) return 0;
+
+    sdr_mutex_lock(&rcv->mtx);
+    int ret = sdr_array_set_alg(array, alg);
+    sdr_mutex_unlock(&rcv->mtx);
+    return ret;
+}
+
 // get receiver array calibration state ----------------------------------------
 int sdr_rcv_array_stat(sdr_rcv_t *rcv, double *rpy, double *bias, double *rms,
     int *nep)
@@ -1628,6 +1640,18 @@ int sdr_rcv_array_stat(sdr_rcv_t *rcv, double *rpy, double *bias, double *rms,
     
     sdr_mutex_lock(&rcv->mtx);
     int ret = sdr_array_stat(array, rpy, bias, rms, nep);
+    sdr_mutex_unlock(&rcv->mtx);
+    return ret;
+}
+
+// copy receiver array calibration status --------------------------------------
+int sdr_rcv_array_get_status(sdr_rcv_t *rcv, sdr_array_status_t *status)
+{
+    sdr_array_t *array = rcv ? rcv->array : NULL;
+    if (!array) return 0;
+
+    sdr_mutex_lock(&rcv->mtx);
+    int ret = sdr_array_get_status(array, status);
     sdr_mutex_unlock(&rcv->mtx);
     return ret;
 }
@@ -1693,7 +1717,12 @@ void sdr_rcv_array_calib(sdr_rcv_t *rcv, const obsd_t *obs, int nobs,
     if (!rcv || !rcv->array) return;
     
     sdr_mutex_lock(&rcv->mtx);
+    int was_valid = rcv->array->calib_valid;
     sdr_array_calib(rcv->array, obs, nobs, nav, rr);
+    if (!was_valid && rcv->array->calib_valid &&
+        rcv->array->calib_source == SDR_CALIB_SRC_STATIC) {
+        refresh_arch_beams(rcv);
+    }
     sdr_mutex_unlock(&rcv->mtx);
 }
 

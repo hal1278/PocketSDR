@@ -169,8 +169,11 @@ static void test_sdr_array_save_load_api(void)
     TEST_ASSERT_EQ_INT(0, sdr_array_save(array, ARRAY_STATE_FILE));
     
     TEST_ASSERT_EQ_INT(1, sdr_array_set(array, rpy_in, bias_in));
+    TEST_ASSERT_EQ_INT(SDR_CALIB_SRC_EXTERNAL, array->calib_source);
     TEST_ASSERT_EQ_INT(1, sdr_array_save(array, ARRAY_STATE_FILE));
     TEST_ASSERT_EQ_INT(1, sdr_array_load(loaded, ARRAY_STATE_FILE));
+    TEST_ASSERT_EQ_INT(SDR_CALIB_SRC_LOADED, loaded->calib_source);
+    TEST_ASSERT_EQ_INT(1, loaded->calib_valid);
     TEST_ASSERT_EQ_INT(0, sdr_array_load(loaded, "no_such_array_state.tmp"));
     
     TEST_ASSERT_EQ_INT(0, sdr_array_stat(loaded, rpy, bias, &rms, &nep));
@@ -179,10 +182,69 @@ static void test_sdr_array_save_load_api(void)
     TEST_ASSERT_NEAR(rpy_in[2], rpy[2], 1e-5);
     TEST_ASSERT_NEAR(bias_in[1], bias[1], 1e-4);
     TEST_ASSERT_NEAR(bias_in[2], bias[2], 1e-4);
+
+    FILE *fp = fopen(ARRAY_STATE_FILE, "w");
+    TEST_ASSERT_TRUE(fp != NULL);
+    fprintf(fp, "# algorithm=static static_epochs=5\n");
+    fprintf(fp, "1.000 -2.000 3.000\n");
+    fprintf(fp, "0.0000 0.1234 -0.5678\n");
+    fclose(fp);
+    TEST_ASSERT_EQ_INT(1, sdr_array_load(loaded, ARRAY_STATE_FILE));
+    TEST_ASSERT_EQ_INT(SDR_CALIB_SRC_LOADED, loaded->calib_source);
     
     sdr_array_free(loaded);
     sdr_array_free(array);
     cleanup_files();
+}
+
+// test selectable calibration lifecycle and geometry invalidation ------------
+static void test_sdr_array_static_lifecycle_api(void)
+{
+    sdr_array_t *array = sdr_array_new(3, 0);
+    double pos[9] = {0, 0, 0, 0.1, 0, 0, 0, 0.1, 0};
+    double changed[9] = {0, 0, 0, 0.2, 0, 0, 0, 0.1, 0};
+    double rpy[3] = {0.1, 0.2, 0.3};
+    double bias[3] = {0, 0.01, 0.02};
+    int ena[3] = {1, 1, 1};
+    sdr_array_status_t status;
+
+    TEST_ASSERT_EQ_INT(SDR_CALIB_ALG_CONTINUOUS, array->calib_alg);
+    TEST_ASSERT_EQ_INT(0, sdr_array_set_alg(array, SDR_CALIB_ALG_STATIC_DYNAMIC));
+    TEST_ASSERT_EQ_INT(1, sdr_array_ant_pos(array, pos, ena));
+    TEST_ASSERT_EQ_INT(1, sdr_array_set_alg(array, SDR_CALIB_ALG_STATIC));
+    TEST_ASSERT_EQ_INT(1, sdr_array_set_mode(array, SDR_CALIB_RPY));
+    TEST_ASSERT_EQ_INT(0, sdr_array_run(array, 1));
+    TEST_ASSERT_EQ_INT(1, sdr_array_set(array, rpy, bias));
+    TEST_ASSERT_EQ_INT(1, sdr_array_ant_pos(array, pos, ena));
+    TEST_ASSERT_EQ_INT(1, array->calib_valid);
+    TEST_ASSERT_EQ_INT(1, sdr_array_run(array, 1));
+    TEST_ASSERT_EQ_INT(0, array->calib_valid);
+    TEST_ASSERT_EQ_INT(1, array->calib_run);
+    TEST_ASSERT_TRUE(array->static_cal != NULL);
+    TEST_ASSERT_EQ_INT(0, sdr_array_set_mode(array, SDR_CALIB_BOTH));
+    TEST_ASSERT_EQ_INT(0, sdr_array_set_alg(array, SDR_CALIB_ALG_CONTINUOUS));
+    TEST_ASSERT_EQ_INT(1, sdr_array_get_status(array, &status));
+    TEST_ASSERT_EQ_INT(SDR_CALIB_ALG_STATIC, status.alg);
+    TEST_ASSERT_EQ_INT(0, status.static_window_epochs);
+    TEST_ASSERT_EQ_INT(1, sdr_array_ant_pos(array, changed, ena));
+    TEST_ASSERT_EQ_INT(0, array->calib_run);
+    TEST_ASSERT_EQ_INT(0, array->calib_valid);
+    TEST_ASSERT_TRUE(array->static_cal == NULL);
+    TEST_ASSERT_EQ_INT(0, sdr_array_run(array, 1));
+    TEST_ASSERT_EQ_INT(1, sdr_array_set_mode(array, SDR_CALIB_BOTH));
+    TEST_ASSERT_EQ_INT(1, sdr_array_run(array, 1));
+    TEST_ASSERT_EQ_INT(1, sdr_array_ant_pos(array, pos, ena));
+    TEST_ASSERT_EQ_INT(1, array->calib_run);
+    TEST_ASSERT_TRUE(array->static_cal != NULL);
+    TEST_ASSERT_EQ_INT(1, sdr_array_run(array, 2));
+    TEST_ASSERT_TRUE(array->static_cal == NULL);
+    TEST_ASSERT_EQ_INT(0, array->calib_valid);
+    TEST_ASSERT_EQ_INT(1, sdr_array_set_alg(array, SDR_CALIB_ALG_CONTINUOUS));
+    TEST_ASSERT_EQ_INT(1, sdr_array_set(array, rpy, bias));
+    ena[2] = 0;
+    TEST_ASSERT_EQ_INT(1, sdr_array_ant_pos(array, pos, ena));
+    TEST_ASSERT_EQ_INT(0, array->calib_valid);
+    sdr_array_free(array);
 }
 
 // test sdr_array_geom_save() and sdr_array_geom_load() ------------------------
@@ -270,6 +332,7 @@ int main(void)
     TEST_RUN(test_sdr_array_run_mode_set_stat_api);
     TEST_RUN(test_sdr_array_calib_edge_api);
     TEST_RUN(test_sdr_array_save_load_api);
+    TEST_RUN(test_sdr_array_static_lifecycle_api);
     TEST_RUN(test_sdr_array_geom_api);
     TEST_RUN(test_sdr_arch_beam_api);
     TEST_RUN(test_sdr_arch_combine_api);
