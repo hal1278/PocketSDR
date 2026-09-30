@@ -133,12 +133,23 @@ The intended architecture is:
 
 | Algorithm | Initialization | After successful initialization | Status |
 | --- | --- | --- | --- |
-| existing/upstream-compatible | current single-epoch yaw-search LS | current EKF | retain |
-| static | multi-epoch static solve | freeze accepted state | implement next |
-| static-dynamic | same robust static initialization | track dynamic attitude | future |
+| `CONTINUOUS` | current single-epoch yaw-search LS | current EKF | retain |
+| `STATIC` | multi-epoch static solve | freeze accepted state | implement next |
+| `STATIC_DYNAMIC` | same robust static initialization | track dynamic attitude | future |
 
-Exact enum/API names are provisional. The important requirement is that this
-selector remains orthogonal to `BOTH/BIAS/RPY`.
+The intended API names are:
+
+```c
+#define SDR_CALIB_ALG_CONTINUOUS     0
+#define SDR_CALIB_ALG_STATIC         1
+#define SDR_CALIB_ALG_STATIC_DYNAMIC 2 /* reserved */
+```
+
+`CONTINUOUS` describes the current upstream-compatible behavior without
+overloading the word "original", which is reserved in the fork documentation
+for upstream/original PocketSDR material.
+
+Algorithm selection remains orthogonal to `BOTH/BIAS/RPY`.
 
 ## 7. Static calibration model
 
@@ -312,3 +323,467 @@ The next implementation should:
 
 The future static-dynamic algorithm should fit into the same selector without
 requiring the static algorithm to be redesigned.
+
+
+## 14. Internal calibration state
+
+The implementation should keep calibration control, validity, and provenance
+as separate state rather than encoding all semantics in `calib_run`,
+`nep`, or covariance contents.
+
+Conceptually, `sdr_array_t` should contain state equivalent to:
+
+```c
+int calib_run;       /* estimator is currently consuming observations */
+int calib_mode;      /* SDR_CALIB_BOTH / BIAS / RPY */
+int calib_alg;       /* CONTINUOUS / STATIC / ... */
+int calib_valid;     /* x[] contains an accepted calibrated state */
+int calib_source;    /* NONE / CONTINUOUS / STATIC / LOADED */
+```
+
+This supports the following externally meaningful states:
+
+```text
+never calibrated:
+    run=0, valid=0, source=NONE
+
+CONTINUOUS initializing:
+    run=1, valid=0
+
+CONTINUOUS tracking:
+    run=1, valid=1, source=CONTINUOUS
+
+STATIC collecting/solving:
+    run=1, valid=0
+
+STATIC complete:
+    run=0, valid=1, source=STATIC
+
+loaded calibration:
+    run=0, valid=1, source=LOADED
+```
+
+The existing `nep` field may retain its current meaning for
+`CONTINUOUS`. Static collection statistics should be represented separately
+instead of redefining `nep` ambiguously.
+
+Useful static statistics include:
+
+```text
+number of collected epochs
+number of retained physical phase measurements
+number of distinct contributing satellites
+collection time span
+last attempted candidate RMS
+```
+
+## 15. Static calibration context
+
+Multi-epoch storage should not be embedded as a large fixed array in
+`sdr_array_t`.
+
+The current spatial path copies the small public array state by value before
+using it. A large calibration buffer inside that structure would make this
+copy expensive and would unnecessarily couple spatial processing to
+calibration internals.
+
+Instead, the static algorithm should own a private context through a pointer,
+for example:
+
+```c
+typedef struct sdr_calib_static_tag sdr_calib_static_t;
+
+/* in sdr_array_t */
+sdr_calib_static_t *static_cal;
+```
+
+The context is created/freed with the array object and reset when a new static
+calibration run begins.
+
+Conceptually it stores:
+
+```c
+struct sdr_calib_static_tag {
+    sdr_calib_meas_t *meas;
+    int nmeas;
+    int nmax;
+    int nepoch;
+    double t_first;
+    double t_last;
+    double last_rms;
+};
+```
+
+Exact field names and allocation strategy may follow existing PocketSDR coding
+style.
+
+## 16. Materialized calibration measurements
+
+The static algorithm should not retain whole `obsd_t` epochs, pointers to
+`nav_t`, or receiver/PVT objects.
+
+At each normal `sdr_array_calib()` call, the observation/navigation data
+needed for calibration should be reduced immediately to self-contained
+measurement rows.
+
+A conceptual row is:
+
+```c
+typedef struct {
+    double time;
+    double los[3];       /* ENU receiver-to-satellite unit vector */
+    double lambda;       /* carrier wavelength */
+    double phase_sd;     /* measured CHk-CH1 phase difference, metres */
+    int sat;
+    int rfch;            /* secondary RF channel / antenna index */
+    int epoch;
+} sdr_calib_meas_t;
+```
+
+The row must contain enough information to rebuild the same model currently
+used by `build_meas()` without later dependence on mutable navigation data.
+
+Satellite-health, elevation, carrier-frequency, reference-channel, and valid
+carrier-phase checks should continue to follow the current calibration
+semantics.
+
+Geometry and enabled-element state remain part of the common array object and
+are not duplicated into every measurement row.
+
+## 17. Static collection policy
+
+While `STATIC` calibration is running, every eligible PVT epoch contributes
+materialized CH1-to-secondary-channel phase measurements.
+
+Collection must be bounded. The implementation should use a finite retained
+time window and/or finite maximum measurement count rather than allowing
+memory and solve cost to grow indefinitely.
+
+The initial implementation may use internal engineering defaults for:
+
+```text
+minimum collection interval
+maximum retained interval
+maximum retained measurements
+```
+
+These are tuning parameters, not part of the first public API. Exact default
+values should be selected from deterministic replay tests.
+
+When the retained window is full, old measurements should be discarded so
+that the static assumption applies to a bounded interval.
+
+No satellite-specific condition, including any rule involving G07, may be used.
+
+## 18. Solver structure
+
+The first `STATIC` solver should intentionally reuse the current calibration
+model and local LS behavior. The primary algorithmic change is that each solve
+uses measurements from multiple epochs.
+
+Current behavior:
+
+```text
+one epoch
+  -> build_meas()
+  -> yaw multistart
+  -> iterative wrapped LS
+  -> optional EKF
+```
+
+New static behavior:
+
+```text
+bounded multi-epoch measurement window
+  -> build_static_meas()
+  -> same yaw multistart
+  -> iterative wrapped LS
+  -> validate
+  -> freeze accepted state
+```
+
+The initial yaw search should remain:
+
+```text
+-180, -165, ..., +165 degrees
+```
+
+with roll and pitch initially zero for `BOTH`/`RPY`, matching the existing
+initializer.
+
+Roll/pitch global search, alternative optimizers, robust losses, and changed
+phase-unwrapping schemes should not be introduced in the first static
+implementation. Keeping the numerical model constant makes it possible to
+attribute any improvement specifically to multi-epoch observation diversity.
+
+The existing `sd_proj()` geometry/sign convention should be reused rather
+than reimplemented.
+
+## 19. Static residual model
+
+For retained physical measurement row `j`, the static solver evaluates the
+same wrapped residual model as the current implementation:
+
+```text
+r_j = wrap_lambda_j(
+          z_j
+        - (geometry_j(attitude) - bias_rfch_j)
+      )
+```
+
+where `geometry_j` uses the stored LOS, current antenna baseline geometry,
+and candidate attitude.
+
+All physical phase rows should initially have equal weight.
+
+Weighting by satellite, RF channel, C/N0, epoch, or pair frequency may be
+investigated later if replay evidence shows a need. It should not be added
+merely to force the current fixture toward a known answer.
+
+## 20. Solve gating and observability
+
+A fixed satellite count is not the definition of observability.
+
+A static solve may be attempted after:
+
+- a minimum collection interval has elapsed,
+- enough physical measurements are available for the active states,
+- the active-state design matrix is numerically solvable.
+
+Full rank is a precondition for attempting/accepting a solution, but it is not
+sufficient to declare calibration valid.
+
+The implementation should retain room for a stronger conditioning or LOS-
+diversity metric once actual replay behavior is measured.
+
+## 21. Candidate isolation and acceptance
+
+Static candidate states must not be written into the public `array->x` while
+they are being tested.
+
+The flow should be:
+
+```text
+local candidate state
+        |
+        v
+wrapped LS iterations
+        |
+        v
+post-fit physical residuals
+        |
+        v
+validation
+   |         |
+ reject    accept
+   |         |
+collect     publish x[]
+more        mark valid
+```
+
+This prevents a wrong wrapped-phase branch from being temporarily consumed by
+beamforming or spatial processing.
+
+For the static solver, RMS should be computed from physical carrier-phase rows
+only. Pseudo-constraint rows used to freeze/regularize states must not be
+included in the RMS denominator.
+
+This also removes the diagnostic discrepancy observed in the failed epoch,
+where the current LS reported about 46.14 mm while the physical measurement
+rows had about 48.78 mm RMS.
+
+The initial final residual gate remains:
+
+```text
+physical RMS <= MAX_RMS = 0.020 m
+```
+
+## 22. Static completion semantics
+
+When a static candidate is accepted:
+
+```text
+array->x            = accepted candidate
+array->rms          = physical post-fit RMS
+array->calib_valid  = 1
+array->calib_source = STATIC
+array->calib_run    = 0
+```
+
+The accepted attitude and RF-channel biases remain fixed.
+
+The static algorithm does not need an EKF covariance for subsequent tracking.
+The current use of non-zero entries of `P` as an implicit
+"initialized/not-initialized" discriminator should therefore be confined to
+the `CONTINUOUS` implementation and must not become common calibration
+lifecycle logic.
+
+## 23. Algorithm dispatch
+
+The public calibration entry point should become an algorithm dispatcher:
+
+```c
+void sdr_array_calib(...)
+{
+    if (!array->calib_run || ...)
+        return;
+
+    switch (array->calib_alg) {
+    case SDR_CALIB_ALG_CONTINUOUS:
+        calib_continuous(...);
+        break;
+
+    case SDR_CALIB_ALG_STATIC:
+        calib_static(...);
+        break;
+    }
+}
+```
+
+The existing `kf_init()`/`kf_update()` behavior can remain inside
+`calib_continuous()` with minimal numerical change.
+
+A later `STATIC_DYNAMIC` implementation can reuse the static solver and then
+enter a separate dynamic tracker without restructuring the selector.
+
+## 24. Start, stop, clear, and load semantics
+
+Control behavior should be explicit:
+
+| Operation | CONTINUOUS | STATIC |
+| --- | --- | --- |
+| Start | reset estimator state, begin current init/EKF path | clear static collection, begin collecting |
+| Stop | stop updates and retain last accepted state | stop collection; remain invalid if no static solution was accepted |
+| Clear | clear calibration validity/state | clear calibration validity/state and collection buffer |
+| Successful solve | continue EKF | publish state and stop automatically |
+| Load | load accepted state, not running | same; loaded state is independent of selected algorithm |
+
+A failed static candidate must not survive a Stop as a valid state.
+
+## 25. Geometry changes
+
+Changing antenna positions or the enabled-element mask changes the array model
+to which the calibration state applies.
+
+Therefore a successful call that changes geometry/enables should invalidate
+the current calibration and clear any static collection context.
+
+Conceptually:
+
+```text
+geometry / enable-mask change
+        |
+        +--> calibration validity = false
+        +--> static collection cleared
+```
+
+A calibration file may then be loaded explicitly if the user knows that it is
+compatible with the new geometry.
+
+This rule also makes the CH8 enable/disable state part of calibration
+provenance rather than an incidental UI setting.
+
+## 26. Web UI and status reporting
+
+The Array page should expose algorithm and mode separately, for example:
+
+```text
+Algorithm: [Continuous | Static]
+Mode:      [Both | Bias | Att]
+```
+
+During static calibration, useful status is:
+
+```text
+CALIB: COLLECTING
+EPOCHS: <retained/collected epochs>
+MEAS:   <physical phase rows>
+SATS:   <distinct contributing satellites>
+RMS:    <last candidate RMS or --->
+```
+
+After acceptance:
+
+```text
+CALIB: VALID (STATIC)
+EPOCHS: ...
+MEAS:   ...
+SATS:   ...
+RMS:    0.00xx m
+```
+
+The Spatial page only needs calibration validity/provenance; it should not
+contain algorithm-specific calibration logic.
+
+An uncalibrated spatial heatmap may still be displayed, but the UI should make
+clear that its absolute direction is based on a nominal, uncalibrated array
+state.
+
+## 27. Save/load compatibility
+
+The existing calibration file format should remain readable.
+
+Additional fork metadata may be added as comment lines, for example:
+
+```text
+# algorithm=static
+# rms=0.0046
+# epochs=18
+```
+
+Loading an old file must continue to work.
+
+A successfully loaded state should be represented as:
+
+```text
+calib_valid  = 1
+calib_source = LOADED
+calib_run    = 0
+```
+
+The algorithm currently selected for the next calibration run does not change
+the provenance of a loaded state.
+
+## 28. Future STATIC_DYNAMIC integration
+
+The static solver should produce an accepted calibration result that is usable
+as a standalone output and as a future dynamic-estimator initial condition.
+
+Conceptually:
+
+```text
+static multi-epoch solve
+        |
+        v
+accepted RPY_0 + RF biases + validation statistics
+        |
+        +--> STATIC: freeze all accepted states
+        |
+        +--> STATIC_DYNAMIC:
+                freeze or very slowly vary RF biases
+                track roll/pitch/yaw dynamically
+```
+
+The first implementation should therefore keep static solving and dynamic
+tracking as separate components rather than building dynamic assumptions into
+the static solver.
+
+## 29. First implementation boundary
+
+The first implementation following this document is complete when:
+
+- `CONTINUOUS` preserves the current upstream-compatible behavior,
+- `STATIC` is separately selectable,
+- static measurements are accumulated across a bounded multi-epoch window,
+- a candidate is solved using the existing wrapped-phase model and yaw
+  multistart,
+- rejected candidates remain private,
+- accepted static calibration freezes automatically,
+- calibration validity/provenance is explicit,
+- geometry changes invalidate calibration,
+- existing calibration files remain loadable,
+- deterministic IF replay demonstrates that temporary observation-set
+  dropouts no longer force the known high-residual wrapped-phase branch.
+
+More sophisticated search, weighting, robust losses, and dynamic tracking are
+outside this first implementation boundary.
