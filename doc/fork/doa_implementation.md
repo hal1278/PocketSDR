@@ -90,10 +90,17 @@ target rather than distinct DOA targets.
 
 The long-term selection key should therefore be the GNSS signal identity,
 currently represented by the satellite ID plus signal ID (for example
-`G12/L1CA`). The backend should select and retain a suitable locked physical-RF
-BB channel as the common reference, exposing its BB/RF channel numbers as
+`G12/L1CA`). The backend should choose one suitable locked physical-RF BB
+channel when the target is selected and expose its BB/RF channel numbers as
 diagnostic state rather than using the BB channel number as the primary UI
 identity.
+
+Automatic reference fallback is deliberately deferred. In the first target-based
+implementation, the chosen reference should remain fixed while it is usable; if
+it becomes unusable, map production should stop and report the unavailable
+reference rather than silently switching to another BB/RF channel. This keeps
+the target/reference semantic cleanup independent from the larger runtime
+resilience change.
 
 Array channels (ARCH) are synthesized beamformed outputs and are not antenna
 inputs to the spatial snapshot. Spatial processing correlates the physical RF
@@ -106,6 +113,44 @@ The snapshot contains:
 - carrier frequency and C/N0,
 - one complex correlation vector per code-delay tap,
 - one row per RF channel.
+
+### Code-wrap polarity coherence
+
+The `pol` argument of `sdr_corr_std()` controls how the two parts of a
+correlation window are combined when the window crosses a primary-code-period
+boundary. With `pol == 0`, the correlator already determines the sign from the
+reference-channel correlation. This is a local correlator decision; it is not
+the same state as decoded navigation-data polarity or secondary-code polarity.
+
+For spatial processing, that decision must be common across antenna channels.
+Independent automatic polarity decisions on each RF channel can introduce a
+spurious element-wise 180-degree phase reversal and corrupt the array manifold.
+
+The intended responsibility split is:
+
+```text
+sdr_func.c
+    correlator AUTO/FORCE polarity handling
+    expose the polarity actually used
+
+sdr_ch.c
+    ordinary reference-channel tracking performs AUTO detection
+    retain the polarity used for the current tracking cycle
+
+sdr_spatial.c
+    apply that one reference polarity to every RF-channel correlation
+    used in the common-reference snapshot
+
+sdr_array.c
+    unchanged; array geometry/calibration is not responsible for
+    correlator-window polarity
+```
+
+The normal single-channel tracking path should not gain an array-specific
+cross-channel branch. The additional runtime work should be limited to exposing
+and storing the sign already computed by the existing correlator, then passing
+it to the existing per-RF spatial correlations. No additional reference
+correlation or per-antenna polarity vote is required.
 
 The current default delay grid is 21 taps from -1 to +1 chip.
 
@@ -238,12 +283,14 @@ Reference: BB CH 37 / RF CH 1
 Elements: RF CH 1-7
 ```
 
-The backend should choose one eligible locked physical-RF BB channel for that
-target and retain it until it is no longer usable, rather than exposing
-multiple otherwise equivalent DOA choices for the same satellite/signal. A
-manual reference override may be useful later for diagnostics, but should not
-be the normal selection model. ARCH channels are beamformed derived channels
-and should not appear as spatial-input elements.
+The first target-based backend should choose one eligible locked physical-RF BB
+channel when the target is selected and retain it as a fixed reference. If that
+reference becomes unavailable, the first implementation should stop map
+production and report the condition instead of automatically switching
+references. Automatic fallback can be added later together with runtime element
+availability handling. A manual reference override may be useful later for
+diagnostics, but should not be the normal selection model. ARCH channels are
+beamformed derived channels and should not appear as spatial-input elements.
 
 The primary Spatial visualization should be a skyplot using the same projection,
 azimuth/elevation grid, cardinal labels, satellite marker style, constellation
@@ -315,29 +362,124 @@ LOS. This is useful evidence that the end-to-end sign/orientation convention is
 plausible, but it is not yet a quantitative calibrated-LOS regression test.
 A reproducible numerical angular-error check should still be added.
 
-## 10. Remaining work
+## 10. Implementation roadmap
 
-The principal planned changes after the current Bartlett implementation are:
+The work after the current Bartlett MVP should be split into independently
+verifiable phases. Reference auto-switching and degraded-array operation are
+explicitly deferred until the simpler target/reference semantics and algorithm
+boundaries are stable.
 
-- change Spatial selection from BB-channel identity to a spatial target keyed by
-  satellite + signal, while retaining BB/RF reference-channel identity as
-  diagnostic state,
-- make the physical RF/antenna-element inputs explicit in status/UI and keep
-  ARCH outputs out of the target/input semantics,
-- revise the spatial algorithm interface to own persistent algorithm state
-  before adding covariance-based estimators,
-- factor Receiver skyplot projection/grid/satellite rendering into shared Web UI
-  utilities and use the same representation as the primary Spatial view,
-- retain the rectangular azimuth/elevation map as an algorithm-diagnostic view,
-- quantify calibrated dominant-peak error against predicted GNSS LOS in the
-  deterministic real-data replay,
-- review common-reference code-wrap/data-polarity handling so one reference
-  polarity decision is applied coherently across antenna channels,
+### Phase 1: fix common-reference polarity and establish a numerical baseline
+
+- extend the low-level standard-correlator path so AUTO polarity can expose the
+  sign actually used without changing the existing normal callers,
+- retain that sign in the reference tracking state for the current cycle,
+- apply the same sign to all RF-channel correlations in
+  `sdr_spatial_snapshot()`,
+- do not add a second polarity estimator in `sdr_array.c` or an
+  array-specific branch to the ordinary tracking control flow,
+- keep existing Bartlett numerical behavior otherwise unchanged,
+- replay the known-good eight-channel IF recording with valid calibration and
+  quantify dominant-peak angular error relative to predicted GNSS LOS.
+
+Manual inspection already indicates broad peak/LOS agreement; this phase turns
+that observation into a reproducible numerical regression surface.
+
+### Phase 2: share the Receiver skyplot representation
+
+- factor sky projection, azimuth/elevation grid, cardinal labels, and satellite
+  marker drawing from the Receiver page into shared Web UI utilities,
+- use the same satellite symbol and constellation/PVT conventions for the
+  predicted LOS in Spatial,
+- make the skyplot the primary Spatial view with the power map underneath the
+  normal satellite marker,
+- retain the current rectangular azimuth/elevation grid as a diagnostic view,
+- verify that the Receiver-page appearance does not regress.
+
+This phase is UI-only with respect to the spatial estimator and should not
+change Bartlett results.
+
+### Phase 3: separate spatial target identity from the common-reference channel
+
+- change normal Spatial selection from BB-channel identity to
+  `satellite + signal`,
+- choose one eligible locked physical-RF BB channel when the target is selected,
+- expose the chosen `BB CH / RF CH` as diagnostic state,
+- expose the physical RF antenna-element set separately from the reference,
+- keep ARCH outputs out of spatial-input semantics,
+- keep the selected reference fixed; if it becomes unusable, stop publishing new
+  maps and report the condition rather than automatically switching references.
+
+The initial implementation may require the reference to be one of the active
+spatial elements. The public/internal model should nevertheless keep reference
+identity and element membership as separate concepts so that restriction can be
+removed later if needed.
+
+### Phase 4: make the spatial algorithm interface stateful
+
+Refactor the current stateless `process(snapshot, array, grid, power)` boundary
+without changing Bartlett output. The intended lifecycle is:
+
+```text
+create
+reset
+update(snapshot)
+make_map(array model, grid)
+free
+```
+
+Move Bartlett power accumulation into the Bartlett algorithm instance. This
+provides the correct boundary for future algorithms that need different
+persistent statistics, especially covariance accumulation for MVDR/Capon and
+MUSIC.
+
+Existing Bartlett synthetic tests and the real-data LOS regression from Phase 1
+should gate this refactor.
+
+### Phase 5: degraded-array operation
+
+After the preceding behavior is stable:
+
+- distinguish configured antenna enablement from runtime RF-channel
+  availability,
+- derive an effective element mask for each usable snapshot,
+- continue spatial estimation when a subset of physical elements is unavailable
+  if the remaining geometry is sufficient,
+- normalize the estimator using the effective element set,
+- reset persistent algorithm state whenever the effective array geometry/mask
+  changes materially,
+- expose active/unavailable RF elements in status/UI.
+
+The current implementation rejects the whole snapshot if any participating RF
+buffer/LO/IQ condition is invalid, so this is a real data-path change rather
+than only a UI enhancement.
+
+### Phase 6: reference fallback
+
+Only after degraded-array operation is defined should automatic reference
+fallback be added.
+
+- if the fixed reference becomes unusable, select another eligible locked BB
+  channel for the same `satellite + signal`,
+- permit the replacement reference to use any compatible physical RF channel
+  allowed by the final reference/element rules,
+- reset algorithm accumulation on the transition,
+- expose the transition in status/logging.
+
+Frequent best-C/N0 reference hopping is not intended; a usable current
+reference should remain stable.
+
+### Phase 7: additional estimators
+
+With the stateful algorithm API and runtime-element semantics established:
+
 - add MVDR/Capon,
 - add coherence-aware MUSIC,
 - optionally expose the delay dimension,
-- consider peak extraction/classification only after the underlying spatial
+- consider later parametric estimators such as SAGE/maximum-likelihood methods,
+- add peak extraction/classification only after the underlying spatial
   estimates are validated.
 
-These changes should remain separable from the selectable array-calibration
-work.
+Calibration algorithm changes remain separate from this roadmap. Geometry and
+accepted array calibration continue to be supplied through the shared
+`sdr_array_t` model.
