@@ -80,6 +80,26 @@ all RF channels using the existing PocketSDR correlator.
 The current implementation accepts only a locked `L1CA` reference channel.
 All participating RF channels must have compatible LO frequency and IQ mode.
 
+The selected BB channel is only the current implementation's common tracking
+reference. It is not the physical unit for which a DOA map is conceptually
+estimated. The map combines the physical RF-channel antenna inputs and estimates
+one spatial response for the selected GNSS signal. If the same satellite/signal
+is tracked by multiple BB channels on different physical RF channels, those BB
+channels are alternative common-reference tracking sources for the same spatial
+target rather than distinct DOA targets.
+
+The long-term selection key should therefore be the GNSS signal identity,
+currently represented by the satellite ID plus signal ID (for example
+`G12/L1CA`). The backend should select and retain a suitable locked physical-RF
+BB channel as the common reference, exposing its BB/RF channel numbers as
+diagnostic state rather than using the BB channel number as the primary UI
+identity.
+
+Array channels (ARCH) are synthesized beamformed outputs and are not antenna
+inputs to the spatial snapshot. Spatial processing correlates the physical RF
+buffers `0 .. nrfch-1`; the current UI deliberately excludes BB channels whose
+source channel is an ARCH output.
+
 The snapshot contains:
 
 - selected channel, satellite, and signal identifiers,
@@ -160,19 +180,27 @@ int (*process)(const sdr_spatial_snapshot_t *,
                float *);
 ```
 
-This is sufficient for Bartlett but should be revised before adding covariance-
-or history-dependent algorithms. MVDR/Capon and MUSIC need accumulated complex
-spatial statistics rather than only an instantaneous map.
+Time accumulation is currently performed outside the algorithm by summing
+instantaneous Bartlett power maps. This is sufficient for Bartlett, but it is
+not the correct abstraction for covariance- or history-dependent algorithms.
+MVDR/Capon and MUSIC require accumulation of complex spatial statistics such as
+the antenna covariance matrix, not merely averaging already formed power maps.
 
-The intended next interface is stateful in concept:
+Before adding those algorithms, the algorithm boundary should become stateful
+in concept:
 
 ```text
 create
 reset
-update(snapshot)
-make_map
+update(snapshot, array state as required)
+make_map(array model, grid)
 free
 ```
+
+Algorithm-specific accumulation, including Bartlett power averaging and future
+covariance accumulation, should belong to the algorithm instance. The common
+spatial layer should remain responsible for target/reference selection,
+snapshot production, update cadence, and published-map transport.
 
 Static linking is sufficient; runtime dynamic plugins are not required.
 
@@ -186,39 +214,73 @@ Expected later algorithms include:
 
 The current Spatial page provides:
 
-- a selector for locked L1 C/A reference channels,
+- a selector that currently lists locked physical-RF L1 C/A BB channels,
 - an algorithm selector containing Bartlett,
 - a rectangular azimuth/elevation heatmap,
 - relative-power display normalized to the brightest cell,
 - current C/N0, receiver time, and map sequence,
-- predicted satellite LOS overlay when PVT and ephemeris status are available.
+- predicted satellite LOS overlay when PVT and ephemeris status are available,
+- array-calibration validity/provenance.
 
 The map is transferred through the binary WebSocket path. Control and status
 remain JSON.
 
-A second skyplot view is desirable. The existing Receiver page already
-contains sky-coordinate projection and array-gain heatmap logic. That
-rendering code should be factored into shared Web UI utilities rather than
-reimplemented independently in the Spatial page.
+The BB-channel selector is an implementation leak. The DOA/spatial result is
+formed from multiple physical RF antenna channels, so the primary selector
+should identify the spatial target, not the BB channel used internally as the
+common replica source. For the current GNSS-only implementation the target key
+should be `satellite + signal`. The UI should show the automatically selected
+reference as secondary diagnostic information, for example:
 
-The rectangular view should remain available for algorithm diagnostics even
-after a skyplot view is added.
+```text
+Target: G12 / L1CA
+Reference: BB CH 37 / RF CH 1
+Elements: RF CH 1-7
+```
+
+The backend should choose one eligible locked physical-RF BB channel for that
+target and retain it until it is no longer usable, rather than exposing
+multiple otherwise equivalent DOA choices for the same satellite/signal. A
+manual reference override may be useful later for diagnostics, but should not
+be the normal selection model. ARCH channels are beamformed derived channels
+and should not appear as spatial-input elements.
+
+The primary Spatial visualization should be a skyplot using the same projection,
+azimuth/elevation grid, cardinal labels, satellite marker style, constellation
+colors, and PVT/elevation semantics as the Receiver page. The predicted LOS
+should be drawn with the same satellite symbol used by Receiver rather than the
+current Spatial-specific white circle.
+
+The Receiver and Spatial pages should not maintain independent copies of this
+drawing logic. Common sky-coordinate projection, grid, and satellite-marker
+rendering should be factored into shared Web UI utilities. The Spatial page then
+adds the spatial-power heatmap beneath the ordinary satellite/LOS marker.
+
+The current rectangular azimuth/elevation map should remain available as a
+diagnostic view. In particular, it is useful for inspecting raw grid output and
+algorithm behavior even though the skyplot is the more natural user-facing
+representation.
 
 ## 8. Calibration semantics
 
-The spatial processor currently copies and uses the current `sdr_array_t`
-state. It does not require a separately asserted "calibration valid" state.
+Explicit calibration validity and provenance are now implemented in the common
+array state and reported through `sdr_array_status_t`. Spatial processing still
+uses the current `sdr_array_t` model, but the Web UI can distinguish accepted
+calibration from a nominal zero/unaccepted state.
 
-As a consequence, a spatial map can be produced with zero-initialized
-attitude/bias state. Such a map is still a Bartlett scan against the nominal
-array model, but its absolute azimuth/elevation should not be treated as
-calibrated.
+The Spatial page reports either an accepted source such as `Continuous`,
+`Static`, `Loaded`, or `External`, or explicitly warns that the map uses a
+nominal uncalibrated array direction. A spatial map may still be produced while
+uncalibrated for diagnostics; its absolute azimuth/elevation must not be treated
+as calibrated.
 
-The fork should therefore add explicit calibration validity/provenance rather
-than infer validity from `calib_run` or `nep` alone.
+Geometry and calibration remain separate. A geometry file can be loaded as
+receiver configuration, while saved calibration is currently loaded explicitly
+through the array calibration controls rather than automatically at receiver
+startup.
 
-Calibration algorithm changes are deliberately kept outside the spatial
-processor and are specified in
+Calibration algorithm design and the selectable continuous/static estimator are
+documented separately in
 [`array_calibration.md`](array_calibration.md).
 
 ## 9. Validation
@@ -247,14 +309,30 @@ It is not assumed to contain a guaranteed resolvable two-path case. Synthetic
 two-component tests remain the deterministic validation path for multiple
 Bartlett peaks.
 
+Manual inspection of the current Spatial UI with the real data indicates that
+the dominant displayed peak is broadly consistent with the predicted satellite
+LOS. This is useful evidence that the end-to-end sign/orientation convention is
+plausible, but it is not yet a quantitative calibrated-LOS regression test.
+A reproducible numerical angular-error check should still be added.
+
 ## 10. Remaining work
 
 The principal planned changes after the current Bartlett implementation are:
 
-- add explicit calibration validity/provenance,
-- revise the spatial algorithm interface to own persistent algorithm state,
-- share skyplot rendering primitives between Receiver and Spatial pages,
-- validate calibrated peak direction against predicted GNSS LOS,
+- change Spatial selection from BB-channel identity to a spatial target keyed by
+  satellite + signal, while retaining BB/RF reference-channel identity as
+  diagnostic state,
+- make the physical RF/antenna-element inputs explicit in status/UI and keep
+  ARCH outputs out of the target/input semantics,
+- revise the spatial algorithm interface to own persistent algorithm state
+  before adding covariance-based estimators,
+- factor Receiver skyplot projection/grid/satellite rendering into shared Web UI
+  utilities and use the same representation as the primary Spatial view,
+- retain the rectangular azimuth/elevation map as an algorithm-diagnostic view,
+- quantify calibrated dominant-peak error against predicted GNSS LOS in the
+  deterministic real-data replay,
+- review common-reference code-wrap/data-polarity handling so one reference
+  polarity decision is applied coherently across antenna channels,
 - add MVDR/Capon,
 - add coherence-aware MUSIC,
 - optionally expose the delay dimension,
