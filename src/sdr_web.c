@@ -786,40 +786,62 @@ static void send_array_stat(sdr_web_t *web, web_cli_t *cli)
 {
     sdr_rcv_t *rcv = web->rcv;
     char *buff = web->json_buff;
-    double rpy[3] = {0}, bias[SDR_MAX_RFCH] = {0}, rms = 0.0, az, el;
-    int nep = 0, n;
+    double rpy[3] = {0}, bias[SDR_MAX_RFCH] = {0}, rms = 0.0;
+    double pos[SDR_MAX_RFCH][3] = {{0}}, az[SDR_MAX_ARCH] = {0};
+    double el[SDR_MAX_ARCH] = {0};
+    int ena[SDR_MAX_RFCH] = {0}, nep = 0, n;
+    sdr_array_status_t status;
 
-    if (!rcv || rcv->narch <= 0 || !rcv->array) {
-        ws_send_text(cli, "{\"type\":\"array_stat\",\"narch\":0}");
+    if (!rcv || !rcv->array) {
+        ws_send_text(cli, "{\"type\":\"array_stat\",\"narch\":0,"
+            "\"has_array\":false}");
         return;
     }
-    int run = sdr_rcv_array_stat(rcv, rpy, bias, &rms, &nep);
+    sdr_mutex_lock(&rcv->mtx);
+    sdr_array_stat(rcv->array, rpy, bias, &rms, &nep);
+    sdr_array_get_status(rcv->array, &status);
+    matcpy(&pos[0][0], &rcv->array->ant_pos[0][0], rcv->nrfch * 3, 1);
+    for (int i = 0; i < rcv->nrfch; i++) ena[i] = rcv->array->ant_ena[i];
+    for (int m = 0; m < rcv->narch; m++) {
+        sdr_arch_get_beam(rcv->arch + m, az + m, el + m);
+    }
+    sdr_mutex_unlock(&rcv->mtx);
     n = snprintf(buff, JSON_BUFF_SIZE, "{\"type\":\"array_stat\","
         "\"narch\":%d,\"nrfch\":%d,\"run\":%d,\"mode\":%d,"
-        "\"rpy\":[%.3f,%.3f,%.3f],\"rms\":%.4f,\"nep\":%d,\"bias\":[",
-        rcv->narch, rcv->nrfch, run, rcv->array->calib_mode, rpy[0] * R2D,
-        rpy[1] * R2D, rpy[2] * R2D, rms, nep);
+        "\"has_array\":true,\"alg\":%d,\"valid\":%s,\"source\":%d,"
+        "\"rpy\":[%.3f,%.3f,%.3f],\"rms\":%.4f,\"nep\":%d,"
+        "\"static\":{\"total_epochs\":%d,\"epochs\":%d,"
+        "\"meas\":%d,\"sats\":%d,\"span\":%.3f,\"last_rms\":",
+        rcv->narch, rcv->nrfch, status.run, status.mode, status.alg,
+        status.valid ? "true" : "false", status.source, rpy[0] * R2D,
+        rpy[1] * R2D, rpy[2] * R2D, rms, nep,
+        status.static_total_epochs, status.static_window_epochs,
+        status.static_meas, status.static_sats, status.static_span);
+    if (status.static_last_rms_valid) {
+        n += snprintf(buff + n, JSON_BUFF_SIZE - n, "%.6f},\"bias\":[",
+            status.static_last_rms);
+    } else {
+        n += snprintf(buff + n, JSON_BUFF_SIZE - n, "null},\"bias\":[");
+    }
     for (int i = 0; i < rcv->nrfch; i++) {
         n += snprintf(buff + n, JSON_BUFF_SIZE - n, "%s%.4f", i ? "," : "",
             bias[i]);
     }
     n += snprintf(buff + n, JSON_BUFF_SIZE - n, "],\"beams\":[");
     for (int m = 0; m < rcv->narch; m++) {
-        if (!sdr_rcv_array_get_beam(rcv, rcv->nrfch + m, &az, &el)) continue;
         n += snprintf(buff + n, JSON_BUFF_SIZE - n, "%s{\"ch\":%d,"
             "\"az\":%.1f,\"el\":%.1f}", m ? "," : "", rcv->nrfch + m + 1,
-            az * R2D, el * R2D);
+            az[m] * R2D, el[m] * R2D);
     }
     n += snprintf(buff + n, JSON_BUFF_SIZE - n, "],\"ant_pos\":[");
     for (int i = 0; i < rcv->nrfch; i++) {
         n += snprintf(buff + n, JSON_BUFF_SIZE - n, "%s[%.4f,%.4f,%.4f]",
-            i ? "," : "", rcv->array->ant_pos[i][0],
-            rcv->array->ant_pos[i][1], rcv->array->ant_pos[i][2]);
+            i ? "," : "", pos[i][0], pos[i][1], pos[i][2]);
     }
     n += snprintf(buff + n, JSON_BUFF_SIZE - n, "],\"ant_ena\":[");
     for (int i = 0; i < rcv->nrfch; i++) {
         n += snprintf(buff + n, JSON_BUFF_SIZE - n, "%s%d", i ? "," : "",
-            rcv->array->ant_ena[i]);
+            ena[i]);
     }
     snprintf(buff + n, JSON_BUFF_SIZE - n, "]}");
     ws_send_text(cli, buff);
@@ -1678,6 +1700,11 @@ static void proc_cmd(sdr_web_t *web, web_cli_t *cli, const char *msg)
         jsn_num(msg, "mode", &mode);
         int ok = sdr_rcv_array_set_mode(web->rcv, (int)mode);
         send_ack(cli, "array_mode", ok, NULL);
+    } else if (!strcmp(cmd, "array_alg")) {
+        double alg = 0.0;
+        int ok = jsn_num(msg, "alg", &alg) &&
+            sdr_rcv_array_set_alg(web->rcv, (int)alg);
+        send_ack(cli, "array_alg", ok, NULL);
     } else if (!strcmp(cmd, "array_beam")) {
         double rfch = 0.0, az = 0.0, el = 0.0;
         jsn_num(msg, "rfch", &rfch);

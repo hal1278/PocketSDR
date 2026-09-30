@@ -14,6 +14,7 @@ export class SpatialPage {
             `<label>Algorithm</label><select id="sp-alg">` +
             `<option>Bartlett</option></select>` +
             `<span class="space"></span>` +
+            `<span class="mono" id="sp-calib">Nominal array</span>` +
             `<span class="mono" id="sp-state">Waiting for receiver</span>` +
             `</div><div class="sp-body">` +
             `<canvas id="sp-map"></canvas>` +
@@ -28,6 +29,13 @@ export class SpatialPage {
         this.el.querySelector('#sp-alg').onchange = () => this.select();
         app.ws.on('ch_stat', msg => this.updateSignals(msg));
         app.ws.on('sat_stat', msg => this.updateLos(msg));
+        app.ws.on('array_stat', msg => {
+            if (!this.active) return;
+            const source = ['None', 'Continuous', 'Static', 'Loaded',
+                'External'][msg.source] || 'Unknown';
+            this.el.querySelector('#sp-calib').textContent = msg.valid ?
+                `Calibrated (${source})` : 'Nominal array · direction uncalibrated';
+        });
         app.ws.on('spatial', msg => {
             if (!this.active || msg.ch != this.ch) return;
             this.map = msg;
@@ -163,6 +171,7 @@ export class SpatialPage {
         this.app.ws.sub('ch_stat', {chno: 0, min_lock: 2, rfch: 0,
             cyc: 500});
         this.app.ws.sub('spatial', {cyc: 250});
+        this.app.ws.sub('array_stat', {cyc: 500});
         if (this.ch) this.select();
         this.redraw();
     }
@@ -171,5 +180,6 @@ export class SpatialPage {
         this.app.ws.unsub('ch_stat');
         this.app.ws.unsub('sat_stat');
         this.app.ws.unsub('spatial');
+        this.app.ws.unsub('array_stat');
     }
 }

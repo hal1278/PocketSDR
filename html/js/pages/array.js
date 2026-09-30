@@ -1,6 +1,8 @@
 // Pocket SDR Web UI - Array page
 
-const MODES = ['Both', 'Delay', 'Att'];
+const MODES = ['Both', 'Bias', 'Att'];
+const ALGORITHMS = ['Continuous', 'Static'];
+const SOURCES = ['None', 'Continuous', 'Static', 'Loaded', 'External'];
 
 export class ArrayPage {
     constructor(app) {
@@ -11,7 +13,10 @@ export class ArrayPage {
             `<div class="toolbar">` +
             `<span class="mono" id="ar-stat">CALIB: ---</span>` +
             `<span class="space"></span>` +
-            `<label>Calibration</label><select id="ar-mode">` +
+            `<label>Algorithm</label><select id="ar-alg">` +
+            ALGORITHMS.map(a => `<option>${a}</option>`).join('') +
+            `</select>` +
+            `<label>Mode</label><select id="ar-mode">` +
             MODES.map(m => `<option>${m}</option>`).join('') + `</select>` +
             `<button id="ar-run">Start</button>` +
             `<button id="ar-clear">Clear</button>` +
@@ -26,7 +31,7 @@ export class ArrayPage {
             `<div class="mono" id="ar-bias">---</div></div>` +
             `<div class="ar-frame"><div class="ar-title">ARRAY ATTITUDE` +
             `</div><div class="mono" id="ar-att">---</div></div>` +
-            `<div class="ar-frame"><div class="ar-title">` +
+            `<div class="ar-frame" id="ar-beam-frame"><div class="ar-title">` +
             `ARRAY CH BEAM DIRECTION</div><div id="ar-beams"></div></div>` +
             `</div>` +
             `<div class="ar-none" id="ar-none">No array channels ` +
@@ -34,6 +39,10 @@ export class ArrayPage {
         this.el.querySelector('#ar-mode').onchange = () => {
             this.app.ws.send({cmd: 'array_mode',
                 mode: MODES.indexOf(this.el.querySelector('#ar-mode').value)});
+        };
+        this.el.querySelector('#ar-alg').onchange = () => {
+            this.app.ws.send({cmd: 'array_alg',
+                alg: ALGORITHMS.indexOf(this.el.querySelector('#ar-alg').value)});
         };
         this.el.querySelector('#ar-run').onclick = () => {
             const run = this.stat && this.stat.run ? 0 : 1;
@@ -68,7 +77,8 @@ export class ArrayPage {
     update(msg) {
         if (!this.active) return;
         this.stat = msg;
-        const none = msg.narch <= 0;
+        const none = msg.has_array === false ||
+            (msg.has_array === undefined && msg.narch <= 0);
         this.el.querySelector('#ar-body').style.display = none ? 'none' : '';
         this.el.querySelector('#ar-none').style.display = none ? '' : 'none';
         if (none) {
@@ -76,14 +86,38 @@ export class ArrayPage {
             return;
         }
         const stat = this.el.querySelector('#ar-stat');
-        stat.textContent = `CALIB: ${msg.run ? 'RUN' : 'STOP'}  ` +
-            `EPOCHS: ${msg.nep}  RMS: ${msg.rms.toFixed(4)} m`;
-        stat.classList.toggle('warn-txt', !!msg.run);
-        this.el.querySelector('#ar-run').textContent =
-            msg.run ? 'Stop' : 'Start';
+        const alg = this.el.querySelector('#ar-alg');
+        const run = this.el.querySelector('#ar-run');
+        if (msg.alg !== 0 && msg.alg !== 1) {
+            stat.textContent = 'CALIB: Server update required';
+            stat.classList.add('warn-txt');
+            alg.value = '';
+            alg.disabled = true;
+            run.disabled = true;
+            return;
+        }
+        alg.disabled = false;
+        run.disabled = false;
+        const source = SOURCES[msg.source] || 'None';
+        const state = msg.run ? (msg.alg === 1 ? 'COLLECTING' : 'RUN') :
+            (msg.valid ? `VALID (${source})` : 'INVALID');
+        const sc = msg.static || {};
+        stat.textContent = msg.alg === 1 ?
+            `CALIB: ${state}  EPOCHS: ${sc.epochs || 0}/${sc.total_epochs || 0}` +
+            `  MEAS: ${sc.meas || 0}  SATS: ${sc.sats || 0}` +
+            `  RMS: ${msg.valid ? msg.rms.toFixed(4) :
+                (sc.last_rms == null ? '---' : sc.last_rms.toFixed(4))} m` :
+            `CALIB: ${state}  EPOCHS: ${msg.nep}  ` +
+            `RMS: ${msg.rms.toFixed(4)} m`;
+        stat.classList.toggle('warn-txt', !!msg.run || !msg.valid);
+        run.textContent = msg.run ? 'Stop' : 'Start';
         const sel = this.el.querySelector('#ar-mode');
         if (document.activeElement != sel) sel.value = MODES[msg.mode] ||
             'Both';
+        if (document.activeElement != alg) alg.value =
+            ALGORITHMS[msg.alg];
+        this.el.querySelector('#ar-beam-frame').style.display =
+            msg.narch > 0 ? '' : 'none';
         this.el.querySelector('#ar-bias').innerHTML = msg.bias.map(
             (b, i) => `CH${i+1}: ${b.toFixed(4)} m`).join('&nbsp;&nbsp; ');
         this.el.querySelector('#ar-att').textContent =

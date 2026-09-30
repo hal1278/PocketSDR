@@ -287,6 +287,10 @@ static void test_sdr_web_command(void)
     ws_send(sock, "{\"cmd\":\"get\",\"topic\":\"pvt_sol\"}");
     ws_recv_type(sock, "pvt_sol", buff, sizeof(buff));
 
+    ws_send(sock, "{\"cmd\":\"get\",\"topic\":\"array_stat\"}");
+    ws_recv_type(sock, "array_stat", buff, sizeof(buff));
+    TEST_ASSERT_TRUE(strstr(buff, "\"has_array\":false") != NULL);
+
     ws_send(sock, "{\"cmd\":\"get\",\"topic\":\"opts\"}");
     ws_recv_type(sock, "opts", buff, sizeof(buff));
     TEST_ASSERT_TRUE(strstr(buff, "\"el_mask\"") != NULL);
@@ -321,6 +325,50 @@ static void test_sdr_web_command(void)
     sdr_rcv_setopt("el_mask", 15.0); // restore the default
     sock_close(sock);
     sdr_web_stop(web);
+}
+
+// array algorithm command and provenance status over WebSocket ---------------
+static void test_sdr_web_array_status(void)
+{
+    double fo[SDR_MAX_RFCH] = {1575.42e6, 1575.42e6};
+    int IQ[SDR_MAX_RFCH] = {2, 2}, bits[SDR_MAX_RFCH] = {4, 4};
+    double rpy[3] = {0.1, 0.2, 0.3}, bias[SDR_MAX_RFCH] = {0, 0.01};
+    char buff[8192];
+    sdr_rcv_t *rcv = sdr_rcv_new(NULL, NULL, 0, SDR_FMT_RAW8, 4e6, fo,
+        IQ, bits, "");
+    TEST_ASSERT_TRUE(rcv != NULL && rcv->array != NULL);
+    sdr_web_t *web = sdr_web_start(rcv, "127.0.0.1", TEST_PORT, TEST_HTML);
+    TEST_ASSERT_TRUE(web != NULL);
+    sock_t sock = ws_open();
+    ws_recv_type(sock, "hello", buff, sizeof(buff));
+
+    ws_send(sock, "{\"cmd\":\"array_alg\",\"alg\":1}");
+    ws_recv_type(sock, "ack", buff, sizeof(buff));
+    TEST_ASSERT_TRUE(strstr(buff, "\"ok\":true") != NULL);
+    ws_send(sock, "{\"cmd\":\"array_mode\",\"mode\":1}");
+    ws_recv_type(sock, "ack", buff, sizeof(buff));
+    ws_send(sock, "{\"cmd\":\"array_run\",\"run\":1}");
+    ws_recv_type(sock, "ack", buff, sizeof(buff));
+    TEST_ASSERT_TRUE(strstr(buff, "\"ok\":true") != NULL);
+    ws_send(sock, "{\"cmd\":\"get\",\"topic\":\"array_stat\"}");
+    ws_recv_type(sock, "array_stat", buff, sizeof(buff));
+    TEST_ASSERT_TRUE(strstr(buff, "\"has_array\":true") != NULL);
+    TEST_ASSERT_TRUE(strstr(buff, "\"alg\":1") != NULL);
+    TEST_ASSERT_TRUE(strstr(buff, "\"mode\":1") != NULL);
+    TEST_ASSERT_TRUE(strstr(buff, "\"valid\":false") != NULL);
+    TEST_ASSERT_TRUE(strstr(buff, "\"static\":{") != NULL);
+
+    ws_send(sock, "{\"cmd\":\"array_run\",\"run\":2}");
+    ws_recv_type(sock, "ack", buff, sizeof(buff));
+    TEST_ASSERT_EQ_INT(1, sdr_array_set(rcv->array, rpy, bias));
+    ws_send(sock, "{\"cmd\":\"get\",\"topic\":\"array_stat\"}");
+    ws_recv_type(sock, "array_stat", buff, sizeof(buff));
+    TEST_ASSERT_TRUE(strstr(buff, "\"valid\":true") != NULL);
+    TEST_ASSERT_TRUE(strstr(buff, "\"source\":4") != NULL);
+
+    sock_close(sock);
+    TEST_ASSERT_TRUE(sdr_web_stop(web) == rcv);
+    sdr_rcv_free(rcv);
 }
 
 // sdr_web_init_cfg() -----------------------------------------------------------
@@ -469,6 +517,7 @@ int main(void)
     TEST_RUN(test_sdr_web_http);
     TEST_RUN(test_sdr_web_handshake);
     TEST_RUN(test_sdr_web_command);
+    TEST_RUN(test_sdr_web_array_status);
     TEST_RUN(test_sdr_web_init_cfg);
     TEST_RUN(test_sdr_web_config);
     TEST_RUN(test_sdr_web_start_rcv);

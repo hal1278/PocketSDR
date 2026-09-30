@@ -531,6 +531,28 @@ def array_calib_mode(rcv, mode):
     libsdr.sdr_rcv_array_set_mode.argtypes = (c_void_p, c_int32)
     return libsdr.sdr_rcv_array_set_mode(rcv, mode)
 
+# set array calibration algorithm ---------------------------------------------
+def array_calib_alg(rcv, alg):
+    libsdr.sdr_rcv_array_set_alg.argtypes = (c_void_p, c_int32)
+    return libsdr.sdr_rcv_array_set_alg(rcv, alg)
+
+class ArrayCalibrationStatus(Structure):
+    _fields_ = [('run', c_int32), ('mode', c_int32), ('alg', c_int32),
+        ('valid', c_int32), ('source', c_int32), ('nep', c_int32),
+        ('rms', c_double), ('static_total_epochs', c_int32),
+        ('static_window_epochs', c_int32), ('static_meas', c_int32),
+        ('static_sats', c_int32), ('static_span', c_double),
+        ('static_last_rms', c_double), ('static_last_rms_valid', c_int32)]
+
+# get array calibration lifecycle and collection status -----------------------
+def array_calib_status(rcv):
+    status = ArrayCalibrationStatus()
+    libsdr.sdr_rcv_array_get_status.argtypes = (c_void_p,
+        POINTER(ArrayCalibrationStatus))
+    if not libsdr.sdr_rcv_array_get_status(rcv, byref(status)):
+        return None
+    return status
+
 # start array calibration ------------------------------------------------------
 def array_calib_start(rcv):
     return array_run(rcv, 1)
@@ -1827,6 +1849,12 @@ def array_page_new(parent):
     p.btn_clear.pack(side=RIGHT)
     p.btn_calib = ttk.Button(p.toolbar, width=7, text='Start')
     p.btn_calib.pack(side=RIGHT)
+    p.alg_var = StringVar(value='Continuous')
+    p.alg_box = ttk.Combobox(p.toolbar, width=10, state='readonly',
+        values=['Continuous', 'Static'], textvariable=p.alg_var,
+        justify=CENTER, font=get_font())
+    p.alg_box.pack(side=RIGHT)
+    ttk.Label(p.toolbar, text='Algorithm').pack(side=RIGHT, padx=2)
     p.mode_var = StringVar(value='Both')
     p.mode_box = ttk.Combobox(p.toolbar, width=5, state='readonly',
         values=['Both', 'Delay', 'Att'], textvariable=p.mode_var,
@@ -1860,15 +1888,22 @@ def array_page_new(parent):
     p.btn_load.bind('<Button-1>', lambda e: on_array_calib_load(e, p))
     p.btn_save.bind('<Button-1>', lambda e: on_array_calib_save(e, p))
     p.mode_box.bind('<<ComboboxSelected>>', lambda e: on_array_mode_change(e, p))
+    p.alg_box.bind('<<ComboboxSelected>>', lambda e: on_array_alg_change(e, p))
     return p
 
 # array calibration mode lookup ------------------------------------------------
 ARRAY_MODES = {'Both': 0, 'Delay': 1, 'Att': 2}
+ARRAY_ALGORITHMS = {'Continuous': 0, 'Static': 1}
 
 # Array page mode change callback ----------------------------------------------
 def on_array_mode_change(e, p):
     if not rcv_body: return
     array_calib_mode(rcv_body, ARRAY_MODES.get(p.mode_var.get(), 0))
+
+# Array page algorithm change callback ----------------------------------------
+def on_array_alg_change(e, p):
+    if not rcv_body: return
+    array_calib_alg(rcv_body, ARRAY_ALGORITHMS.get(p.alg_var.get(), 0))
 
 # generate beam directions -----------------------------------------------------
 def gen_beam_dirs(parent, p, i):
@@ -1897,8 +1932,28 @@ def update_array_page(p):
     stat = array_calib_stat(rcv_body)
     if not stat: return
     run, rpy, bias, rms, nep = stat
-    text1 = 'CALIB: %s  EPOCHS: %3d  RMS: %6.4f m' % (
-        'RUN' if run else 'STOP', nep, rms)
+    detail = array_calib_status(rcv_body)
+    if detail:
+        p.mode_var.set(('Both', 'Delay', 'Att')[detail.mode]
+            if 0 <= detail.mode < 3 else 'Both')
+        p.alg_var.set(('Continuous', 'Static')[detail.alg]
+            if 0 <= detail.alg < 2 else 'Continuous')
+    sources = ('None', 'Continuous', 'Static', 'Loaded', 'External')
+    source = sources[detail.source] if detail and detail.source < len(sources) \
+        else 'Unknown'
+    state = 'COLLECTING' if run and detail and detail.alg == 1 else \
+        'RUN' if run else 'VALID (%s)' % source if detail and detail.valid \
+        else 'INVALID'
+    if detail and detail.alg == 1:
+        shown_rms = rms if detail.valid else detail.static_last_rms if \
+            detail.static_last_rms_valid else None
+        text1 = 'CALIB: %s  EPOCHS: %d/%d  MEAS: %d  SATS: %d  RMS: %s m' % (
+            state, detail.static_window_epochs, detail.static_total_epochs,
+            detail.static_meas, detail.static_sats,
+            '%.4f' % shown_rms if shown_rms is not None else '---')
+    else:
+        text1 = 'CALIB: %s  EPOCHS: %3d  RMS: %6.4f m' % (
+            state, nep, rms)
     text2 = 'ROLL:%8.3f\xb0  PITCH:%8.3f\xb0  YAW:%8.3f\xb0' % (rpy[0] / D2R,
         rpy[1] / D2R, rpy[2] / D2R)
     text3 = ''
@@ -1906,6 +1961,7 @@ def update_array_page(p):
         text3 += ' CH%d:%7.4f m ' % (i + 1, bias[i])
         text3 += '\n\n' if i % 4 == 3 and i < MAX_RFCH - 1 else ''
     p.txt_stat.configure(text=text1, fg=WARN_COLOR if run else 'black')
+    p.btn_calib.configure(text='Stop' if run else 'Start')
     p.txt_att.configure(text=text2, fg=WARN_COLOR if run else 'black')
     p.txt_bias.configure(text=text3, fg=WARN_COLOR if run else 'black')
 
@@ -1943,6 +1999,9 @@ def on_array_calib_toggle(e, p):
             return
         array_ant_pos(rcv_body, ant_pos, ena)
         array_calib_mode(rcv_body, ARRAY_MODES.get(p.mode_var.get(), 0))
+        if not array_calib_alg(rcv_body,
+            ARRAY_ALGORITHMS.get(p.alg_var.get(), 0)):
+            return
         if not array_calib_start(rcv_body):
             return
         p.btn_calib.configure(text='Stop')
