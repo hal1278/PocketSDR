@@ -118,7 +118,7 @@ STUB_RCV  = $(TEST_SRC)/sdr_rcv_stub.c
 
 SRC_test_sdr_array    = $(SRC)/sdr_array.c $(SRC)/sdr_cmn.c
 SRC_test_sdr_spatial  = $(SRC)/sdr_spatial.c $(SRC)/sdr_array.c \
-                        $(SRC)/sdr_cmn.c
+                        $(SRC)/sdr_func.c $(SRC)/sdr_cmn.c
 SRC_test_sdr_ch       = $(SRC)/sdr_ch.c $(SRC)/sdr_nav.c $(SRC)/sdr_code.c \
                         $(SRC)/sdr_code_gal.c $(SRC)/sdr_func.c \
                         $(SRC)/sdr_fec.c $(SRC)/sdr_ldpc.c \
@@ -153,6 +153,7 @@ SRC_test_sdr_rcv      = $(SRC)/sdr_rcv.c $(SRC)/sdr_ch.c $(SRC)/sdr_nav.c \
                         $(SRC)/sdr_fec.c $(SRC)/sdr_ldpc.c \
                         $(SRC)/sdr_nb_ldpc.c $(STUB_DEV) $(STUB_SDEV) \
                         $(STUB_USB) $(SRC)/sdr_cmn.c
+SRC_test_sdr_spatial_replay = $(SRC_test_sdr_rcv)
 SRC_test_sdr_sdev     = $(STUB_SDEV) $(SRC)/sdr_cmn.c
 SRC_test_sdr_usb      = $(STUB_USB) $(SRC)/sdr_cmn.c
 SRC_test_sdr_web      = $(SRC)/sdr_web.c $(SRC)/sdr_rcv.c $(SRC)/sdr_ch.c \
@@ -176,6 +177,7 @@ $(1)$(EXE): $(TEST_SRC)/$(1).c $$(SRC_$(1)) $(TEST_SRC)/test_sdr.h $(LIBDEP)
 endef
 
 $(foreach T,$(TESTS) $(PERF_TESTS),$(eval $(call BUILD_TEST,$(T))))
+$(eval $(call BUILD_TEST,test_sdr_spatial_replay))
 
 ifneq ($(EXE),)
 $(TESTS) $(PERF_TESTS): %: %$(EXE)
@@ -189,5 +191,6 @@ perf: test_sdr_perf$(EXE)
 
 clean:
 	rm -rf build test_sdr_web_html
-	rm -f $(TARGETS) $(PERF_TARGETS) sdr_func_c_test sdr_func_c_test.exe \
+	rm -f $(TARGETS) $(PERF_TARGETS) test_sdr_spatial_replay$(EXE) \
+	    sdr_func_c_test sdr_func_c_test.exe \
 	    $(TESTS) $(PERF_TESTS) *.o *.stackdump

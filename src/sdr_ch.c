@@ -366,6 +366,7 @@ static sdr_trk_t *trk_new(const char *sig, int prn, const int8_t *code,
     
     trk->nposx = 0;
     trk->sec_sync = trk->sec_pol = 0;
+    trk->wrap_pol = trk->wrap_pol_valid = 0;
     trk->csk_ref = -1;
     trk->err_phas = trk->err_code = 0.0;
     trk->phas_acc = trk->code_int = 0.0;
@@ -501,6 +502,7 @@ static void trk_init(sdr_trk_t *trk)
     trk->err_phas = trk->err_code = 0.0;
     trk->phas_acc = trk->code_int = 0.0;
     trk->sec_sync = trk->sec_pol = 0;
+    trk->wrap_pol = trk->wrap_pol_valid = 0;
     trk->csk_ref = -1;
     trk->sumP = trk->sumN = trk->sumVE = trk->sumVL = 0.0;
     trk->sumPs = trk->sumD = 0.0;
@@ -771,6 +773,7 @@ static void test_lost(sdr_ch_t *ch)
     
     ch->state = SDR_STATE_IDLE;
     ch->lock = 0;
+    ch->trk->wrap_pol_valid = 0;
     ch->trk->sec_sync = ch->trk->sec_pol = 0;
     ch->nav->ssync = ch->nav->fsync = ch->nav->rev = 0;
     ch->lost++;
@@ -862,6 +865,7 @@ static void adj_coff(sdr_ch_t *ch)
 // track signal ----------------------------------------------------------------
 static void track_sig(sdr_ch_t *ch, double time, const sdr_buff_t *buff, int ix)
 {
+    ch->trk->wrap_pol_valid = 0;
     double tau = time - ch->time;   // time interval (s) 
     double fc = ch->fi + ch->fd;    // IF carrier frequency with Doppler (Hz)
     ch->adr += ch->fd * tau;        // accumulated Doppler (cyc)
@@ -902,10 +906,12 @@ static void track_sig(sdr_ch_t *ch, double time, const sdr_buff_t *buff, int ix)
             corr_e5abq(ch, buff, ix, fc, C1);
         } else {
             // standard correlator (carrier mixing fused)
-            sdr_corr_std(buff, ix, ch->N, ch->fs, fc, ch->phi, ch->trk->code,
+            ch->trk->wrap_pol = sdr_corr_std_auto(buff, ix, ch->N, ch->fs,
+                fc, ch->phi, ch->trk->code,
                 ch->trk->code_sum, NULL, NULL, ch->trk->code_scale,
                 ch->coff * ch->fs, ch->trk->pos,
-                ch->trk->npos + ch->trk->nposx, 0, ch->trk->C, C1);
+                ch->trk->npos + ch->trk->nposx, ch->trk->C, C1);
+            ch->trk->wrap_pol_valid = 1;
         }
         for (int i = 0; i < 2; i++) {
             C1[0][i] = (C1[0][i] + ch->trk->C1[i]) / ch->N;

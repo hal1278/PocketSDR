@@ -21,6 +21,7 @@ static int snapshot_delays(const sdr_rcv_t *rcv, const sdr_ch_t *ch, int ix,
     if (!rcv || !ch || !snap || !ch->trk || ch->state != SDR_STATE_LOCK ||
         ch->rf_ch < 0 || ch->rf_ch >= rcv->nrfch || rcv->nrfch < 2 ||
         strcmp(ch->sig, "L1CA") || !ch->trk->code || !ch->trk->code_sum ||
+        !ch->trk->wrap_pol_valid || abs(ch->trk->wrap_pol) != 1 ||
         ndelay < 1 || ndelay > SDR_SPATIAL_NDELAY) {
         return 0;
     }
@@ -49,7 +50,8 @@ static int snapshot_delays(const sdr_rcv_t *rcv, const sdr_ch_t *ch, int ix,
         sdr_cpx_t C[2];
         sdr_corr_std(rcv->buff[i], ix, ch->N, ch->fs, ch->fi + ch->fd,
             ch->phi, ch->trk->code, ch->trk->code_sum, NULL, NULL,
-            ch->trk->code_scale, ch->coff * ch->fs, pos, snap->ndelay, 1,
+            ch->trk->code_scale, ch->coff * ch->fs, pos, snap->ndelay,
+            ch->trk->wrap_pol,
             snap->corr[i], C);
     }
     return 1;

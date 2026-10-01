@@ -201,6 +201,8 @@ typedef struct {                // signal tracking type
     sdr_cpx_t P[SDR_N_HIST];    // history of P correlations
     int sec_sync;               // secondary code sync status
     int sec_pol;                // secondary code polarity
+    int wrap_pol;               // code-wrap polarity selected by AUTO
+    int wrap_pol_valid;         // polarity available for current cycle
     int csk_ref;                // L6 CSK code shift reference (chips) (-1:unset)
     double err_phas;            // phase error (cyc)
     double err_code;            // code error (chip)
@@ -548,6 +550,10 @@ void sdr_corr_std2(const sdr_buff_t *buff, int ix, int N, double fs,
     const int32_t *code2_sum, const int8_t *code2_Q,
     const int32_t *code2_sum_Q, int scale, double coff, const double *pos,
     int n, int pol, sdr_cpx_t *corr, sdr_cpx_t *C);
+int sdr_corr_std_auto(const sdr_buff_t *buff, int ix, int N, double fs,
+    double fc, double phi, const int8_t *code, const int32_t *code_sum,
+    const int8_t *code_Q, const int32_t *code_sum_Q, int scale, double coff,
+    const double *pos, int n, sdr_cpx_t *corr, sdr_cpx_t *C);
 void sdr_corr_std_cpx(const sdr_cpx_t *buff, int len_buff, int ix, int N,
     double fs, double fc, double phi, const float *code, const double *pos,
     int n, sdr_cpx_t *corr);

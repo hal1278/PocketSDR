@@ -8,6 +8,8 @@
 extern double sdr_t_acq;
 extern double sdr_t_acq_ext;
 extern double sdr_t_coh;
+extern double sdr_thres_cn0_u;
+extern int sdr_lost_th;
 
 // pack signed I/Q values into sdr_cpx8_t --------------------------------------
 static sdr_cpx8_t pack_cpx8(int re, int im)
@@ -253,6 +255,42 @@ static void test_sdr_ch_update_lock_api(void)
     sdr_ch_free(ch);
 }
 
+// verify tracking retains and invalidates the current AUTO wrap sign ---------
+static void test_sdr_ch_wrap_polarity(void)
+{
+    sdr_ch_t *ch = sdr_ch_new("L1CA", 1, 4e6, 0.0);
+    TEST_ASSERT_TRUE(ch != NULL);
+    sdr_buff_t *buff = sdr_buff_new(ch->N * 2, 2);
+    int j = ch->N / 2;
+
+    TEST_ASSERT_EQ_INT(0, ch->trk->wrap_pol_valid);
+    ch->state = SDR_STATE_LOCK;
+    ch->coff = j / ch->fs;
+    ch->cn0 = 45.0;
+    for (int expected = -1; expected <= 1; expected += 2) {
+        for (int i = 0; i < ch->N; i++) {
+            int code = ch->trk->code[(i + ch->N - j) % ch->N];
+            buff->data[i] = pack_cpx8(3 * code * (i < j ? 1 : expected), 0);
+        }
+        sdr_ch_update(ch, ch->time + ch->T, buff, 0);
+        TEST_ASSERT_EQ_INT(SDR_STATE_LOCK, ch->state);
+        TEST_ASSERT_EQ_INT(1, ch->trk->wrap_pol_valid);
+        TEST_ASSERT_EQ_INT(expected, ch->trk->wrap_pol);
+    }
+    double old_thres = sdr_thres_cn0_u;
+    int old_lost = sdr_lost_th;
+    sdr_thres_cn0_u = 1e9;
+    sdr_lost_th = 1;
+    ch->lock = 499;
+    sdr_ch_update(ch, ch->time + ch->T, buff, 0);
+    TEST_ASSERT_EQ_INT(SDR_STATE_IDLE, ch->state);
+    TEST_ASSERT_EQ_INT(0, ch->trk->wrap_pol_valid);
+    sdr_thres_cn0_u = old_thres;
+    sdr_lost_th = old_lost;
+    sdr_buff_free(buff);
+    sdr_ch_free(ch);
+}
+
 // test coherent prompt accumulation for a synchronized pilot -----------------
 static void test_sdr_ch_update_pilot_coherent_api(void)
 {
@@ -316,6 +354,7 @@ static void test_ch_update_l6_csk(const char *sig, int prn)
 
     for (int m = 0; m < n_sym; m++) {
         sdr_ch_update(ch, (m + 1) * ch->T, buff, m * ch->N);
+        TEST_ASSERT_EQ_INT(0, ch->trk->wrap_pol_valid);
 
         // decoded CSK symbol
         uint8_t sym = ch->nav->syms[SDR_MAX_NSYM-1];
@@ -364,6 +403,7 @@ int main(void)
     TEST_RUN(test_sdr_ch_update_search_api);
     TEST_RUN(test_sdr_ch_update_assisted_search_api);
     TEST_RUN(test_sdr_ch_update_lock_api);
+    TEST_RUN(test_sdr_ch_wrap_polarity);
     TEST_RUN(test_sdr_ch_update_pilot_coherent_api);
     TEST_RUN(test_sdr_ch_update_l6_csk);
 

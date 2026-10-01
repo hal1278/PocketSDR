@@ -1211,7 +1211,7 @@ static void dot_IQ_code2_acc(const sdr_cpx16_t *IQ, const int8_t *codeI,
 //      C        (O) correlations before and after bit transition
 //
 //  return:
-//      none
+//      selected code-wrap polarity (+1/-1)
 //
 //  notes:
 //      The value of spreading codes shall be int8_t. Correlations are
@@ -1228,7 +1228,7 @@ static void dot_IQ_code2_acc(const sdr_cpx16_t *IQ, const int8_t *codeI,
 //      (NULL = same as code*). They allow a replica whose sideband combination
 //      sign differs across the wrap-around, which pol cannot express.
 //
-void sdr_corr_std2(const sdr_buff_t *buff, int ix, int N, double fs,
+static int corr_std2_impl(const sdr_buff_t *buff, int ix, int N, double fs,
     double fc, double phi, const int8_t *code, const int32_t *code_sum,
     const int8_t *code_Q, const int32_t *code_sum_Q, const int8_t *code2,
     const int32_t *code2_sum, const int8_t *code2_Q,
@@ -1331,6 +1331,20 @@ void sdr_corr_std2(const sdr_buff_t *buff, int ix, int N, double fs,
         C[0][i] = corr1[0][i];
         C[1][i] = corr2[0][i];
     }
+    return sign > 0.0f ? 1 : -1;
+}
+
+// correlate with separate code banks while preserving the public API ---------
+void sdr_corr_std2(const sdr_buff_t *buff, int ix, int N, double fs,
+    double fc, double phi, const int8_t *code, const int32_t *code_sum,
+    const int8_t *code_Q, const int32_t *code_sum_Q, const int8_t *code2,
+    const int32_t *code2_sum, const int8_t *code2_Q,
+    const int32_t *code2_sum_Q, int scale, double coff, const double *pos,
+    int n, int pol, sdr_cpx_t *corr, sdr_cpx_t *C)
+{
+    (void)corr_std2_impl(buff, ix, N, fs, fc, phi, code, code_sum, code_Q,
+        code_sum_Q, code2, code2_sum, code2_Q, code2_sum_Q, scale, coff, pos,
+        n, pol, corr, C);
 }
 
 // mix carrier and standard correlator (same code bank over the wrap-around) ----
@@ -1341,6 +1355,16 @@ void sdr_corr_std(const sdr_buff_t *buff, int ix, int N, double fs,
 {
     sdr_corr_std2(buff, ix, N, fs, fc, phi, code, code_sum, code_Q, code_sum_Q,
         NULL, NULL, NULL, NULL, scale, coff, pos, n, pol, corr, C);
+}
+
+// correlate in AUTO mode and return the code-wrap polarity actually used -----
+int sdr_corr_std_auto(const sdr_buff_t *buff, int ix, int N, double fs,
+    double fc, double phi, const int8_t *code, const int32_t *code_sum,
+    const int8_t *code_Q, const int32_t *code_sum_Q, int scale, double coff,
+    const double *pos, int n, sdr_cpx_t *corr, sdr_cpx_t *C)
+{
+    return corr_std2_impl(buff, ix, N, fs, fc, phi, code, code_sum, code_Q,
+        code_sum_Q, NULL, NULL, NULL, NULL, scale, coff, pos, n, 0, corr, C);
 }
 
 // mix carrier and standard correlator for complex buffer (for python) ---------
@@ -1756,5 +1780,3 @@ int sdr_gen_fftw_wisdom(const char *file, int N)
     
     return stat;
 }
-
-

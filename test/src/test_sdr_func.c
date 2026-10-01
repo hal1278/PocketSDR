@@ -247,6 +247,51 @@ static void test_sdr_corr_api(void)
     sdr_buff_free(buff);
 }
 
+// verify AUTO reports its actual wrap sign without changing correlations -----
+static void test_sdr_corr_auto_polarity(void)
+{
+    const int N = 16;
+    int8_t code[N * SDR_N_CODES];
+    int32_t sums[(N + 1) * SDR_N_CODES] = {0};
+    double pos[3] = {0.0, -1.0, 1.0};
+    sdr_cpx_t auto_corr[3], old_corr[3], fixed_corr[3];
+    sdr_cpx_t auto_parts[2], old_parts[2], fixed_parts[2];
+    sdr_buff_t *buff = sdr_buff_new(N, 2);
+
+    for (int k = 0; k < SDR_N_CODES; k++) {
+        for (int i = 0; i < N; i++) {
+            code[k * N + i] = 1;
+            sums[k * (N + 1) + i + 1] = i + 1;
+        }
+    }
+    for (int expected = -1; expected <= 1; expected += 2) {
+        for (int i = 0; i < N; i++) {
+            buff->data[i] = pack_cpx8(i < N / 2 ? 3 : 3 * expected, 0);
+        }
+        int sign = sdr_corr_std_auto(buff, 0, N, 16.0, 0.0, 0.0,
+            code, sums, NULL, NULL, 1, N / 2.0, pos, 3, auto_corr,
+            auto_parts);
+        sdr_corr_std(buff, 0, N, 16.0, 0.0, 0.0, code, sums, NULL, NULL,
+            1, N / 2.0, pos, 3, 0, old_corr, old_parts);
+        sdr_corr_std(buff, 0, N, 16.0, 0.0, 0.0, code, sums, NULL, NULL,
+            1, N / 2.0, pos, 3, expected, fixed_corr, fixed_parts);
+        TEST_ASSERT_EQ_INT(expected, sign);
+        for (int i = 0; i < 3; i++) {
+            for (int q = 0; q < 2; q++) {
+                TEST_ASSERT_NEAR(old_corr[i][q], auto_corr[i][q], 1e-6);
+                TEST_ASSERT_NEAR(fixed_corr[i][q], auto_corr[i][q], 1e-6);
+            }
+        }
+        for (int i = 0; i < 2; i++) {
+            for (int q = 0; q < 2; q++) {
+                TEST_ASSERT_NEAR(old_parts[i][q], auto_parts[i][q], 1e-6);
+                TEST_ASSERT_NEAR(fixed_parts[i][q], auto_parts[i][q], 1e-6);
+            }
+        }
+    }
+    sdr_buff_free(buff);
+}
+
 // generate prefix sums of code bank ---------------------------------------------
 static int32_t *gen_code_sum(const int8_t *code, int N)
 {
@@ -730,6 +775,7 @@ int main(void)
     TEST_RUN(test_sdr_tag_api);
     TEST_RUN(test_sdr_mix_carr_api);
     TEST_RUN(test_sdr_corr_api);
+    TEST_RUN(test_sdr_corr_auto_polarity);
     TEST_RUN(test_sdr_corr_std_equiv);
     TEST_RUN(test_sdr_corr_std_cpx_code_equiv);
     TEST_RUN(test_sdr_corr_std2_precombined);
