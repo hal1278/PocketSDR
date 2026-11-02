@@ -18,6 +18,7 @@
 //  2026-10-25  1.5  accept observation data of the channels with the TOW
 //                   carried over a re-acquisition
 //                   inherit the last fix position regardless of the CPU time
+//  2026-11-02  1.5  output QZS L6D/L6E frames as SBF QZSRawL6 blocks
 //
 #include "pocket_sdr.h"
 
@@ -504,6 +505,40 @@ static void out_rtcm3_nav(rtcm_t *rtcm, int sat, int type, const nav_t *nav,
     if (gen_rtcm3(rtcm, msg, 0, 0)) {
         sdr_rcv_write_str(rcv, SDR_STR_RTCM3, rtcm->buff, rtcm->nbyte);
     }
+}
+
+// set little-endian unsigned integer ------------------------------------------
+static void set_ule(uint8_t *p, uint32_t val, int n)
+{
+    for (int i = 0; i < n; i++) p[i] = (uint8_t)(val >> (i * 8));
+}
+
+// output QZS L6 frame as SBF QZSRawL6 (4069) ----------------------------------
+static void out_sbf_l6(gtime_t time, const sdr_ch_t *ch, sdr_rcv_t *rcv)
+{
+    uint8_t buff[272] = {'$', '@'}, *p = buff + 8, data[252] = {0};
+    int prn, week, sat = satid2no(ch->sat);
+
+    if (!str_ena(rcv, SDR_STR_L6) || time.time == 0 ||
+        satsys(sat, &prn) != SYS_QZS) {
+        return;
+    }
+    double tow = time2gpst(time, &week); // epoch time at frame decoding
+    set_ule(buff + 4, 4069, 2);
+    set_ule(buff + 6, sizeof(buff), 2);
+    set_ule(p, (uint32_t)(floor(tow + 0.5) * 1000.0), 4);
+    set_ule(p + 4, week, 2);
+    p[6] = (uint8_t)(prn - 12); // SVID: QZS PRN 193-202 -> 181-190
+    p[7] = 1;
+    p[8] = (uint8_t)(ch->nav->nerr < 255 ? ch->nav->nerr : 255);
+    p[9] = !strcmp(ch->sig, "L6E") ? 2 : 1;
+    p[11] = (uint8_t)ch->no;
+    memcpy(data, ch->nav->data, 250);
+    for (int i = 0; i < 63; i++) {
+        set_ule(p + 12 + i * 4, getbitu(data, i * 32, 32), 4);
+    }
+    set_ule(buff + 2, rtk_crc16(buff + 4, sizeof(buff) - 4), 2);
+    sdr_rcv_write_str(rcv, SDR_STR_L6, buff, sizeof(buff));
 }
 
 // set observation data index --------------------------------------------------
@@ -1087,6 +1122,8 @@ void sdr_pvt_udnav(sdr_pvt_t *pvt, sdr_ch_t *ch)
             out_rtcm3_nav(pvt->rtcm, sat, 0, pvt->nav, pvt->rcv);
             pvt->count[2]++;
         }
+    } else if (!strcmp(ch->sig, "L6D") || !strcmp(ch->sig, "L6E")) { // QZS L6
+        out_sbf_l6(pvt->time, ch, pvt->rcv);
     }
     sdr_mutex_unlock(&pvt->mtx);
 }

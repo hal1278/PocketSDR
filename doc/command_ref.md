@@ -323,7 +323,7 @@ pocket_trk [-sig sig -prn prn[,...] [-rfch ch[,...]] ...]
            [-toff toff] [-tscale scale] [-ti tint]
            [-p bus[,port]] [-c conf_file]
            [-driver name] [-gain gain] [-bw bw] [-gpio val] [-EXT_CLOCK]
-           [-NO_SYNC] [-fd dopp] [-log path] [-nmea path] [-rtcm path] [-raw path] ...
+           [-NO_SYNC] [-fd dopp] [-log path] [-nmea path] [-rtcm path] [-raw path] [-l6 path] ...
            [-arch nch] [-geom file] [-sens name[,...]]
            [-h height] [-opt file] [-debug file] [-v] [file]
 ```
@@ -399,6 +399,8 @@ The input can be a local file, a TCP stream, a Pocket SDR FE device, or a SoapyS
   - Output stream path for raw observations and navigation data as RTCM3.3 messages. Same path syntax and repeatability as `-log`.
 - `-raw path`
   - Output stream path for raw IF data. Same path syntax and repeatability as `-log`. Enabled only for Pocket SDR FE or SoapySDR device inputs.
+- `-l6 path`
+  - Output stream path for decoded QZSS L6D/L6E frames as Septentrio SBF `QZSRawL6` (4069) blocks, e.g. as CLAS or MADOCA-PPP correction input to RTKLIB-based receivers. The block time is the PVT epoch time at the frame decoding; no block is output before the epoch time is set. Same path syntax and repeatability as `-log`.
 - `-arch nch`
   - Number of antenna array channels. Array CHs are appended after the RF
     CHs. [`0`]

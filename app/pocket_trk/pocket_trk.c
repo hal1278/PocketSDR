@@ -28,6 +28,7 @@
 //                   -log and -raw options
 //  2026-08-02  1.12 add -arch and -geom options for antenna array
 //  2026-08-07  1.13 close the SDR device on console close for Windows
+//  2026-11-02  1.14 add -l6 option
 //
 #include <math.h>
 #include <signal.h>
@@ -56,7 +57,7 @@ static const char *usage_text[] = {
     "       [-toff toff] [-ti tint] [-p bus,[,port] [-c conf_file]",
     "       [-driver name] [-gain gain] [-bw bw] [-gpio val] [-EXT_CLOCK]",
     "       [-NO_SYNC] [-fd dopp] [-log path] [-nmea path] [-rtcm path]",
-    "       [-raw path] ... [-opt file] [-arch nch] [-geom file]",
+    "       [-raw path] [-l6 path] ... [-opt file] [-arch nch] [-geom file]",
     "       [-sens name[,...]] [file]",
     NULL
 };
@@ -274,6 +275,8 @@ int main(int argc, char **argv)
             add_str(types, paths, SDR_STR_LOG, argv[++i]);
         } else if (!strcmp(argv[i], "-raw") && i + 1 < argc) {
             add_str(types, paths, SDR_STR_IFDATA, argv[++i]);
+        } else if (!strcmp(argv[i], "-l6") && i + 1 < argc) {
+            add_str(types, paths, SDR_STR_L6, argv[++i]);
         } else if (!strcmp(argv[i], "-h") && i + 1 < argc) {
             max_row = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "-opt") && i + 1 < argc) {

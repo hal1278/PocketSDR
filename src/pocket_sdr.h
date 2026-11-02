@@ -111,6 +111,7 @@ extern "C" {
 #define SDR_STR_RTCM3  2        // output stream type: RTCM3
 #define SDR_STR_LOG    3        // output stream type: receiver log
 #define SDR_STR_IFDATA 4        // output stream type: IF data log
+#define SDR_STR_L6     5        // output stream type: QZS L6 (SBF QZSRawL6)
 
 #define SDR_STATE_IDLE 1        // SDR channel state: idle
 #define SDR_STATE_SRCH 2        // SDR channel state: search
