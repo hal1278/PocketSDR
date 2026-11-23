@@ -514,16 +514,20 @@ static void set_ule(uint8_t *p, uint32_t val, int n)
 }
 
 // output QZS L6 frame as SBF QZSRawL6 (4069) ----------------------------------
-static void out_sbf_l6(gtime_t time, const sdr_ch_t *ch, sdr_rcv_t *rcv)
+static void out_sbf_l6(const sdr_pvt_t *pvt, const sdr_ch_t *ch)
 {
     uint8_t buff[272] = {'$', '@'}, *p = buff + 8, data[252] = {0};
     int prn, week, sat = satid2no(ch->sat);
+    sdr_rcv_t *rcv = pvt->rcv;
 
-    if (!str_ena(rcv, SDR_STR_L6) || time.time == 0 ||
+    if (!str_ena(rcv, SDR_STR_L6) || pvt->time.time == 0 ||
         satsys(sat, &prn) != SYS_QZS) {
         return;
     }
-    double tow = time2gpst(time, &week); // epoch time at frame decoding
+    // SIS time stamp: transmission time of the frame end, an integer second
+    // (GPST of the reception at ch->time minus the propagation delay ~0.1 s)
+    gtime_t time = timeadd(pvt->time, ch->time - pvt->ix * SDR_CYC - 0.1);
+    double tow = time2gpst(time, &week);
     set_ule(buff + 4, 4069, 2);
     set_ule(buff + 6, sizeof(buff), 2);
     set_ule(p, (uint32_t)(floor(tow + 0.5) * 1000.0), 4);
@@ -1123,7 +1127,7 @@ void sdr_pvt_udnav(sdr_pvt_t *pvt, sdr_ch_t *ch)
             pvt->count[2]++;
         }
     } else if (!strcmp(ch->sig, "L6D") || !strcmp(ch->sig, "L6E")) { // QZS L6
-        out_sbf_l6(pvt->time, ch, pvt->rcv);
+        out_sbf_l6(pvt, ch);
     }
     sdr_mutex_unlock(&pvt->mtx);
 }
